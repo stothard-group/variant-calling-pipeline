@@ -77,17 +77,18 @@ following slurm options:
 - pmem: total memory, all values in mb (--mem)
 
 #### Add user-specific files to the reference_files directory
-The latest reference files should be used. For *Bos taurus* 
-ARS-UCD1.2_Btau5.0.1Y, these can be found at [1000bullgenomes.com](http://www.1000bullgenomes.com/).
+ Make a directory called `reference_files` as specified in the config file and 
+ add the following files:
 
-For any other genome, add the following files to the `reference_files` 
-directory specified in the config file:
 - reference genome in Fasta format
 - fai index file
 - BWA index files (.amb, .ann, .bwt, .pac, .sa)
 - Picard sequence dictionary file (.dict)
 - file containing a list of all chromosome and contig names in the reference 
 genome, with the filename {reference_genome}.fa.NAMES
+
+For *Bos taurus* ARS-UCD1.2_Btau5.0.1Y, these files can downloaded from 
+[1000bullgenomes.com](http://www.1000bullgenomes.com/).
 
 ## Running the Variant Calling workflow
 
