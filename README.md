@@ -29,41 +29,60 @@ tar -xzvf software_variant_calling.tar.gz
 ## Setup
 
 Requirements:
-- Python 3 (This workflow was developed and tested with Python v. 3.7)
+- Python 3.7+ (This workflow was developed and tested with Python v. 3.7)
+- setuptools
+- cython
+- gcc 7.3
+
+Install the following python modules using pip:
+- pysam>=0.15.4
+- pandas>=0.24.1
+- numpy>=1.12.0
+
+Or run the setup.py script to install the required modules:
+
+`python setup.py install`
+
+
+## Required programs to run the workflow
+
+The following must be in your path:
+
 - R (This workflow was developed and tested with R v. 3.6.1)
 - Java SE Development Kit 8, Update 192 (1.8.0_192)
 
+These programs must either be in your path, or must be specified in 
+the file `config/variant_calling.config.yaml`:
 
-#### Compute Canada Setup
+- BWA 0.7.17
+- FastQC >= 0.11.7
+- samtools >= 1.8
+- picard == 2.18.2
+- GenomeAnalysisTK == 3.8-1-0-gf15c1c3ef
 
-1. Load Python
-	
-	`module load python/3.7`
-	
-2. Install the following python modules:
+Note: This specific version of GATK is required by the 1000 Bulls Run 8 
+specifications. Other minor versions of GATK v.3 may be compatible, but 
+GATK v.4 is incompatible with this workflow. 
 
-	`pip install pandas pysam --user`
+The following R libraries are required:
 
-3. Install the following R libraries:
-	
-	```
-	module load r/3.6.1
-	R	
-	```
-	In the R console, look for **caTools**, **ggplot2**, and **gplots** using 
-	`installed.packages()`. If these libraries are not included in the list, 
-	install them:
-	```
-	install.packages(c('caTools','ggplot2','gplots'))
-	q()
-	```
-	Be sure to save changes to the workspace upon exiting R.
+- caTools
+- ggplot2
+- gplots
+- gsalib
+- reshape
+
+These can be installed in the R shell with 
+
+`install.packages(c('caTools','ggplot2','gplots','gsalib','reshape'))`
+
 
 ## Edit Config Files
 
-Two files control all configurable options in this workflow:
-`variant_calling.config.yaml` and `variant_calling.clusterconfig.yaml`. Edit 
-these files according to your setup. 
+Two files within the `config` directory control all configurable options 
+in this workflow: `variant_calling.config.yaml` and 
+`variant_calling.clusterconfig.yaml`. Edit these files according to your 
+setup. 
 
 All rules in the workflow are designed to run on a single node of a cluster 
 with up to 30 CPUs 
@@ -77,30 +96,38 @@ following slurm options:
 - pmem: total memory, all values in mb (--mem)
 
 #### Add user-specific files to the reference_files directory
- Make a directory called `reference_files` as specified in the config file and 
- add the following files:
+
+The following files must be added to the `resources/reference_files` directory.
+File names should be specified in `variant_calling.config.yaml`:
 
 - reference genome in Fasta format
 - fai index file
 - BWA index files (.amb, .ann, .bwt, .pac, .sa)
-- Picard sequence dictionary file (.dict)
-- file containing a list of all chromosome and contig names in the reference 
-genome, with the filename {reference_genome}.fa.NAMES
+- Picard sequence dictionary file (.dict) **
+- file containing a list of all contig names in the reference 
+genome, one item per line
 
-For *Bos taurus* ARS-UCD1.2_Btau5.0.1Y, these files can downloaded from 
+For *Bos taurus* ARS-UCD1.2_Btau5.0.1Y, some of these files can downloaded from 
 [1000bullgenomes.com](http://www.1000bullgenomes.com/).
+
+\** The *.dict file can be generated using Picard. Navigate to the 
+`resources/reference_files/` directory and run:
+
+```
+ java -jar picard.jar CreateSequenceDictionary \ 
+      R=reference.fasta \ 
+      O=reference.dict
+```
+
 
 ## Running the Variant Calling workflow
 
-There are two parts that make up the Variant Calling workflow. The steps that 
-are completed when running the workflow are controlled by commenting or 
-uncommenting the inputs within `rule final`. Because it is imperative that all 
-bam files have been merged properly before this second step, the subsequent 
-inputs are initially commented out. Once this workflow has been run until the 
-midway completion point (no new jobs are created), uncomment the second set of 
-steps. If for some reason the bam merge step was unsuccessful, the workflow 
-will hang and the file {sample_name}_incorrect.txt will be created in the 
-{output_dir}/alignment/ directory.
+### Input files
+
+The workflow expects paired-end fastq files as inputs, within a directory 
+in `variant_calling`. The relative path to this directory should be specified 
+in the `variant_calling.config.yaml` file.
+
 
 #### Note on sequence filenames
 This workflow was designed for sequence files named as follows:
@@ -115,16 +142,22 @@ This workflow was designed for sequence files named as follows:
 Pipeline modification is required to support filenames that deviate from this 
 convention.
 
+### Output files
+
+Output files will be generated within subdirectories of `results`. The final 
+VCF files will be generated in `results/snps_indels/`. For more information on 
+the contents of other output directories, see the [Workflow Readme](https://github.com/stothard-group/variant-calling-pipeline/blob/master/VariantCallingWorkflow.md).
+
 #### Command line options
 
-Once the appropriate changes are made to the config files and workflow file, 
-VariantCalling.sm, execute the workflow using the following command:
+Once the appropriate changes are made to the config file,
+ execute the workflow using the following command:
 
 ```
-snakemake --snakefile VariantCalling.sm \
+snakemake --snakefile VariantCalling.smk \
 --cluster-config VariantCalling.clusterconfig.yaml \
 --cluster "sbatch -N 1 -c {cluster.n} --mem={cluster.pmem} \
---time={cluster.time} --account={rrg-stothard-ac}" --rerun-incomplete \
+--time={cluster.time} --account=accountname" --rerun-incomplete \
 --printshellcmds -j 10
 ```
 
