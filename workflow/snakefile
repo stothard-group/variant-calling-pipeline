@@ -2,27 +2,27 @@ from os.path import join
 import pandas as pd
 
 #Uncomment the following line if working on compute canada
-#shell.prefix("module load java/1.8.0_192; module load python/3.7; module load gcc/7.3, module load r/3.6.1")
-localrules: check_merge, split_contigs_list
+shell.prefix("module load gcc/7.3; module load python/3.7; module load fastqc; module load bwa; module load r/3.6.1; module load java/1.8.0_192 ; module load samtools ;")
+localrules: split_contigs_list
 
 # This workflow requires the python module pysam, which can be installed with
 # pip3 install pysam --user
 # The rules to generate pdf files with graphs use R and require several R libraries
 # ggplot2, gplots, caTools, reshape, and gsalib
 
-# snakemake --snakefile VariantCalling.sm --cluster-config VariantCalling.clusterconfig.yaml --cluster "sbatch -N 1 -c {cluster.n} --mem={cluster.pmem} --time={cluster.time} --account=rrg-stothard-ac" --rerun-incomplete --printshellcmds -j 20
+# snakemake --snakefile workflow/VariantCalling.smk --cluster "sbatch -N 1 -c {cluster.n} --mem={cluster.pmem} --time={cluster.time} --account=rrg-stothard-ac" --rerun-incomplete --printshellcmds -j 20
 
 #########################################################################################
 # Path to config file
 #########################################################################################
-configfile: 'VariantCalling.config.yaml'
+configfile: 'config/VariantCalling.config.yaml'
 
 
 #########################################################################################
 # Set local variables 
 #########################################################################################
 RAW_FASTQ_DIR = config["raw_fastq_dir"]
-OUTPUT_DIR = "results"
+OUTPUT_DIR = "results/"
 READ_INDEX = config["read_index"]
 REF_DIR = "resources/reference_files/"
 REFERENCE = REF_DIR + config["basename"]
@@ -65,14 +65,17 @@ samples, = glob_wildcards(join(RAW_FASTQ_DIR, "{sample}_R1.fastq.gz"))
 
 def get_sample_names(sam_list):
     sample_list = []
+    run_ids = []
     for filename in sam_list:
         filenameparts = filename.split(".")
         sample_name = filenameparts[4]
         sample_name = sample_name.replace("_R1", "")
         sample_list.append(sample_name)
-    return sample_list
+        run_name = filenameparts[0] + "." + filenameparts[1] + "." + filenameparts[2] + "." + filenameparts[3]
+        run_ids.append(run_name)
+    return sample_list, run_ids
 
-list_of_samples = get_sample_names(samples)
+list_of_samples, run_ids = get_sample_names(samples)
 
 # Genomic intervals
 chr_list = [config["chr_prefix"] + str(i) for i in range(int(config["autosomes_range_first"]),
@@ -110,6 +113,7 @@ rule final:
         expand(STAT_DIR + "{sample_list_val}.bam.depth.sample_summary", sample_list_val=list_of_samples),
         expand(CONTIGS_DIR + 'contigs_names_{contigs_interval}.geneintervals.interval_list', contigs_interval=contigs_part),
         expand(GVCF_DIR + "chrs/validate/{sample}.1.g.vcf.txt", sample=bam_samples),
+        expand(VCF_DIR + "chrs/{chrs_interval}.gt.vcf", chrs_interval=chr_list),
         expand(SNPINDELS_DIR + "SNPs.vcf"),
         expand(SNPINDELS_DIR + "Indels.vcf"),
 
@@ -122,10 +126,13 @@ rule fastqc_raw:
         RAW_FASTQ_DIR + "{sample}_{RR}.fastq.gz"
     output:
         FASTQC_DIR + "{sample}_{RR}_fastqc.zip"
-    params:
-        threads = THREADS
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 180,
+        mem_mb = 4000,
     shell: 
-        "{FASTQC} -t {params.threads} --outdir {FASTQC_DIR} {input}"
+        "{FASTQC} -t {threads} --outdir {FASTQC_DIR} {input}"
 
 
 #########################################################################################
@@ -135,14 +142,19 @@ rule split:
     input:
         r1 = RAW_FASTQ_DIR + "{sample}_R1.fastq.gz",
         r2 = RAW_FASTQ_DIR + "{sample}_R2.fastq.gz"
+
+    threads: 4
+    resources:
+        cores = 4,
+        runtime = 30,
+        mem_mb = 10000,
     output:
         expand(RAW_FASTQ_DIR + "split/{{sample}}_{{RR}}_part{new}.fastq.gz", new=range(n_of_chunks))
     params:
         r1 = lambda wildcards: RAW_FASTQ_DIR + "split/" + wildcards.sample + '_R1_part',
         r2 = lambda wildcards: RAW_FASTQ_DIR + "split/" + wildcards.sample + '_R2_part',
-        mem = JAVA_MEM
     shell:
-        "partition.sh {params.mem} in={input.r1} in2={input.r2} out={params.r1}%.fastq.gz \
+        "partition.sh {resources.mem_mb} in={input.r1} in2={input.r2} out={params.r1}%.fastq.gz \
                 out2={params.r2}%.fastq.gz ways={n_of_chunks};\
         touch {output}"
 
@@ -159,16 +171,18 @@ rule trimmomatic:
         p2 = TRIMMED_DATA + "trimmomatic/{sample}_R2_part{n}.trimP.fastq.gz",
         s1 = TRIMMED_DATA + "trimmomatic/{sample}_R1_part{n}.trimS.fastq.gz",
         s2 = TRIMMED_DATA + "trimmomatic/{sample}_R2_part{n}.trimS.fastq.gz",
-    params:
-        threads = THREADS,
-        mem = JAVA_MEM
-    log: 
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 120,
+        mem_mb = 4000,
+    log:
         LOGS + "trimmomatic-{sample}_part{n}.summary"
     shell:
-        "java -jar {params.mem} {trimmomaticPE} PE -threads {params.threads} \
+        "java -Xmx{resources.mem_mb}m -jar {trimmomaticPE} PE -threads {threads} \
                 {input.r1} {input.r2} {output.p1} {output.s1} {output.p2} {output.s2} \
                 ILLUMINACLIP:{ADAPTERS}:2:30:3:1:true LEADING:20 TRAILING:20 SLIDINGWINDOW:3:15 \
-                AVGQUAL:20 MINLEN:35 -phred33 -summary {log}"
+                AVGQUAL:20 MINLEN:35 -phred33 2> {log}"
 
 
 #########################################################################################
@@ -181,10 +195,13 @@ rule fastqc_trimmed:
     output:
         FASTQC_DIR + "{sample}_R1_part1.trimP_fastqc.zip",
         FASTQC_DIR + "{sample}_R2_part1.trimP_fastqc.zip"
-    params:
-        threads = THREADS
+    threads: 4
+    resources:
+        cores = 4,
+        runtime = 60,
+        mem_mb = 4000,
     shell: 
-        "{FASTQC} -q -t {params.threads} --outdir {FASTQC_DIR} {input}"
+        "{FASTQC} -q -t {threads} --outdir {FASTQC_DIR} {input}"
 
 
 #########################################################################################
@@ -209,14 +226,18 @@ rule bwa_map:
         r2 = TRIMMED_DATA + "trimmomatic/{sample}_R2_part{n}.trimP.fastq.gz",
     output:
         ALIGN_DIR + "{sample}_part{n}.sam",
+    threads: 8
+    resources:
+        cores = 8,
+        runtime = 6400,
+        mem_mb = 32000,
     params:
-        threads = THREADS_MED,
         sm_n = '{sample}_{n}',
         sm = '{sample}',
         RG_label = lambda wildcards: get_rg_label('{sample}'.format(sample=wildcards.sample))
     shell:
         """
-        {BWA} mem -M -R '{params.RG_label}' -t {params.threads} \
+        {BWA} mem -M -R '{params.RG_label}' -t {threads} \
                 {REFERENCE} {input.r1} {input.r2}  > {output}
         """
 
@@ -230,10 +251,13 @@ rule sam_to_sorted_bam:
     output:
         bam = ALIGN_DIR + "{sample}_part{n}.bam",
         bai = ALIGN_DIR + "{sample}_part{n}.bai"
-    params:
-        javamem = JAVA_MEM
+    threads: 5
+    resources:
+        cores = 5,
+        runtime = 60,
+        mem_mb = 20000,
     shell:
-        "java {params.javamem}  -jar {PICARD} SortSam \
+        "java -Xmx{resources.mem_mb}m -jar {PICARD} SortSam \
             INPUT={input} OUTPUT={output.bam} \
             CREATE_INDEX=TRUE \
             MAX_RECORDS_IN_RAM=50000 \
@@ -251,12 +275,15 @@ rule merge_bam:
                 n = [str(i) for i in list(range(n_of_chunks))]),
     output:
         ALIGN_DIR + "{sample}.m.bam"
+    resources:
+        cores = 1,
+        runtime = 180,
+        mem_mb = 4000,
     params:
         bam = ' '.join(["I=" + ALIGN_DIR + "{sample}_part" + str(n) + ".bam" for n in \
                 list(range(n_of_chunks))]),
-        javamem = JAVA_MEM
     run:
-        shell("java {params.javamem}  -jar {PICARD} MergeSamFiles {params.bam} O={output}")
+        shell("java -Xmx{resources.mem_mb}m -jar {PICARD} MergeSamFiles {params.bam} O={output}")
 
 
 #########################################################################################
@@ -286,15 +313,21 @@ def create_input_list(sample_name):
     return new_input_string
 
 rule agg_and_dedup:
+    input:
+        [ALIGN_DIR + "{run}.{sample}.m.bam".format(sample=list_of_samples, run=run_ids) for list_of_samples,run_ids in zip(list_of_samples, run_ids)]
     params:
         input_line = lambda wildcards: create_input_list('{val}'.format(val=wildcards.sample_list_val)),
-        javamem = JAVA_MEM
     output:
         mdbam = ALIGN_DIR + "{sample_list_val}.m.md.bam",
         metrics = ALIGN_DIR + "{sample_list_val}.m.md.bam.txt"
+    threads: 16
+    resources:
+        cores = 16,
+        runtime = 180,
+        mem_mb = 40000,
     shell:
         """
-        java {params.javamem} -jar {PICARD} MarkDuplicates \
+        java -Xmx40g -jar {PICARD} MarkDuplicates \
             {params.input_line} \
             O={output.mdbam} \
             METRICS_FILE={output.metrics} \
@@ -309,12 +342,18 @@ rule check_merge:
     input:
         merge = ALIGN_DIR + "{sample_list_val}.m.md.bam"
     params:
-        sample_val = "{sample_list_val}"
+        sample_val = "{sample_list_val}",
+        aln_dir = ALIGN_DIR
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 60,
+        mem_mb = 4000
     output:
         merge_check = ALIGN_DIR + "{sample_list_val}_correct.txt"
     script:
         """
-        scripts/bam_checker.py 
+        workflow/scripts/bam_checker.py
         """
 
 
@@ -323,11 +362,14 @@ rule build_bai:
         ALIGN_DIR + "{sample_list_val}.m.md.bam"
     output:
         ALIGN_DIR + "{sample_list_val}.m.md.bai"
-    params:
-        javamem = JAVA_MEM
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 180,
+        mem_mb = 8000,
     shell:
         """
-        java {params.javamem} -jar {PICARD} BuildBamIndex I={input} O={output}
+        java -Xmx{resources.mem_mb}m -jar {PICARD} BuildBamIndex I={input} O={output}
         """
 
 
@@ -343,15 +385,18 @@ rule counts1_for_BQSR:
     output:
         RECAL_DIR + "{sample_list_val}.m.md.recalibration_report.grp"
     params:
-        javamem = JAVA_BIGMEM,
-        threads = THREADS_BIG,
         reference = REFERENCE + ".fa",
+    threads: 32
+    resources:
+        cores = 32,
+        runtime = 240,
+        mem_mb = 125000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m -jar {GATK} \
             -T BaseRecalibrator \
             -I {input.bam} \
-            -nct {params.threads} \
+            -nct {threads} \
             -R {params.reference} \
             --bqsrBAQGapOpenPenalty 45 \
             --knownSites:{dbsnp_format} {DBSNP} \
@@ -367,17 +412,20 @@ rule base_recal:
         rec = RECAL_DIR + "{sample_list_val}.m.md.recal.bam",
         bai = RECAL_DIR + "{sample_list_val}.m.md.recal.bai"
     params:
-        threads = THREADS_BIG,
-        javamem = JAVA_BIGMEM,
         reference = REFERENCE + ".fa",
+    threads: 32
+    resources:
+        cores = 32,
+        runtime = 300,
+        mem_mb = 125000,
 
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m -jar {GATK} \
             -T PrintReads \
             -I {input.bam} \
             -BQSR {input.counts} \
-            -nct {params.threads} \
+            -nct {threads} \
             -R {params.reference} \
             -l INFO -log {output.rec}.log \
             -o {output.rec}
@@ -390,16 +438,19 @@ rule counts2_for_BQSR:
     output:
         RECAL_DIR + "{sample_list_val}.m.md.recalibration_report2.grp"
     params:
-        threads = THREADS_BIG,
-        javamem = JAVA_MEM,
         reference = REFERENCE + ".fa",
+    threads: 32
+    resources:
+        cores = 32,
+        runtime = 240,
+        mem_mb = 125000,
 
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m -jar {GATK} \
             -T BaseRecalibrator \
             -I {input.bam} \
-            -nct {params.threads} \
+            -nct {threads} \
             -R {params.reference} \
             --bqsrBAQGapOpenPenalty 45 \
             --knownSites:{dbsnp_format} {DBSNP} \
@@ -414,12 +465,15 @@ rule analyze_covariates:
     output:
         RECAL_DIR + "{sample_list_val}.m.md.recal_plots.pdf"
     params:
-        javamem = JAVA_MEM,
         reference = REFERENCE + ".fa",
-
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m -jar {GATK} \
             -T AnalyzeCovariates \
             -before {input.counts} \
             -after {input.counts2} \
@@ -435,9 +489,14 @@ rule bam_stats:
     input:
         bam = RECAL_DIR + "{sample_list_val}.m.md.recal.bam",
         #bai = RECAL_DIR + "{new_sample}.bai"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 240,
+        mem_mb = 4000,
     output:
         STAT_DIR + "{sample_list_val}.m.md.recal.bam.stats.txt"
-    shell: 
+    shell:
         "{SAMTOOLS} flagstat {input.bam} > {output}"
 
 
@@ -450,15 +509,18 @@ rule depth_of_coverage:
         #bai = RECAL_DIR + "renamed/{new_sample}.bai"
     output:
         summary = STAT_DIR + "{sample_list_val}.bam.depth.sample_summary"
+    threads: 32
+    resources:
+        cores = 32,
+        runtime = 180,
+        mem_mb = 125000,
     params:
         basename = lambda wildcards: STAT_DIR + wildcards.sample_list_val + '.bam.depth',
-        threads = THREADS_BIG,
-        javamem = JAVA_BIGMEM,
         reference = REFERENCE + ".fa",
 
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m  -jar {GATK} \
             -T DepthOfCoverage \
             -R {params.reference} \
             -I {input.bam} \
@@ -469,7 +531,7 @@ rule depth_of_coverage:
             --summaryCoverageThreshold 150 --minBaseQuality 15 --minMappingQuality 30 \
             --start 1 --stop 1000 --nBins 999 -dt NONE \
             --omitIntervalStatistics \
-            --num_threads {params.threads}  \
+            --num_threads {threads}  \
             --omitDepthOutputAtEachBase \
             --logging_level ERROR \
             -o {params.basename}
@@ -505,17 +567,21 @@ rule haplotype_caller_contigs:
     input:
         bam = RECAL_DIR + "{sample}.m.md.recal.bam",
     output:
-        expand(GVCF_DIR + "contigs/{{sample}}.{{contigs_interval}}.g.vcf.gz")
+        expand(GVCF_DIR + "contigs/{{sample}}.{{contigs_interval}}.g.vcf.gz", sample=bam_samples)
     params:
-        javamem = JAVA_MEM,
         tmpdir =  "./tmp",
         contigs_file = lambda wildcards: CONTIGS_DIR + 'contigs_names_' + wildcards.contigs_interval + \
                 '.geneintervals.interval_list',
         reference = REFERENCE + ".fa"
+    threads: 4
+    resources:
+        cores = 4,
+        runtime = 360,
+        mem_mb = 8000,
     shell:
         """
         mkdir -p {params.tmpdir};  \
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m -jar {GATK} \
         -T HaplotypeCaller \
         -R {params.reference} \
         -I {input.bam} \
@@ -530,21 +596,26 @@ rule haplotype_caller_contigs:
 #  Merge contig *.G.VCF files
 ########################################################################################################################
 
+
 rule merge_gvcf_contigs:
     input:
         expand(GVCF_DIR + "contigs/{{sample}}.{contigs_interval}.g.vcf.gz", contigs_interval=contigs_part)
     output:
         GVCF_DIR  + "contigs_merged/{sample}.g.vcf"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     params:
         tmpdir = "./tmpdir",
-        javamem = JAVA_MEM,
         variants = " -V ".join(expand(GVCF_DIR + "contigs/{{sample}}.{contigs_interval}.g.vcf.gz",
                                       contigs_interval=contigs_part)),
         reference = REFERENCE + ".fa"
     shell:
         """
         mkdir -p {params.tmpdir};  \
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m -jar {GATK} \
             -T CombineGVCFs \
             -R {params.reference} \
             -V {params.variants} \
@@ -562,15 +633,19 @@ rule haplotype_caller_chrs:
         expand(GVCF_DIR + "chrs/{{sample}}.{{chrs_interval}}.g.vcf.gz"),
     params:
         tmpdir = "./tmpdir",
-        javamem = JAVA_MEM,
         chrom = lambda wildcards: wildcards.chrs_interval,
         reference = REFERENCE + ".fa"
+    threads: 4
+    resources:
+        cores = 4,
+        runtime = 360,
+        mem_mb = 8000,
     log:
         expand(LOG_DIR + "chrs/{{sample}}.{{chrs_interval}}.txt")
     shell:
         """
         (mkdir -p {params.tmpdir};  \
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m -jar {GATK} \
             -T HaplotypeCaller \
             -R {params.reference} \
             -I {input.bam} \
@@ -586,14 +661,17 @@ rule validate_vcf:
     output: GVCF_DIR + "chrs/validate/{sample}.1.g.vcf.txt"
     params:
         tmpdir = "./tmpdir",
-        javamem = JAVA_MED,
-        threads = THREADS_BIG,
         reference = REFERENCE + ".fa",
         unzipped = GVCF_DIR + "chrs/{sample}.1.g.vcf"
+    threads: 32
+    resources:
+        cores = 32,
+        runtime = 60,
+        mem_mb = 30000,
     shell:
         """
         gunzip -k {input}
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m -jar {GATK} \
             -T ValidateVariants \
             -R  {params.reference}\
             -V {params.unzipped} \
@@ -612,18 +690,21 @@ rule genotype_chrs:
         gt = VCF_DIR + "chrs/{chrs_interval}.gt.vcf"
     params:
         tmpdir = "./tmpdir",
-        javamem = JAVA_BIGMEM,
-        threads = THREADS_BIG,
         reference = REFERENCE + ".fa",
         infiles = " --variant ".join(expand(GVCF_DIR + "chrs/{sample}.{{chrs_interval}}.g.vcf.gz", sample=bam_samples))
+    threads: 32
+    resources:
+        cores = 32,
+        runtime = 180,
+        mem_mb = 100000,
     shell:
         """
         mkdir -p {params.tmpdir}; \
-        {JAVA_1P8} {params.javamem} -jar {GATK} \
+        java -Xmx{resources.mem_mb}m -jar {GATK} \
             -T GenotypeGVCFs \
             -R {params.reference} \
             --variant {params.infiles}\
-            --num_threads {params.threads} \
+            --num_threads {threads} \
             -o  {output.gt}
         """
 
@@ -634,21 +715,24 @@ rule genotype_contigs:
         expand(GVCF_DIR + "contigs_merged/{sample}.g.vcf", sample=bam_samples),
     output:
         gt = VCF_DIR + "contigs.gt.vcf",
+    threads: 32
+    resources:
+        cores = 32,
+        runtime = 180,
+        mem_mb = 100000,
     params:
         tmpdir = "./tmp" ,
-        javamem = JAVA_MED +  " -Djava.io.tmpdir=./tmp",
-        threads = THREADS_BIG,
         reference = REFERENCE + ".fa",
         infiles = " --variant ".join(expand(GVCF_DIR + "contigs_merged/{sample}.g.vcf", sample=bam_samples))
     shell:
         """
         mkdir -p {params.tmpdir}; \
-	    {JAVA_1P8} {params.javamem}  -jar {GATK} \
+	    java -Xmx{resources.mem_mb}m -Djava.io.tmpdir={params.tmp}  -jar {GATK} \
             -T GenotypeGVCFs \
             -R {params.reference} \
             --disable_auto_index_creation_and_locking_when_reading_rods \
             --variant {params.infiles}\
-            --num_threads {params.threads} \
+            -nct {threads} \
             -o  {output.gt}; \
         rm -rf {params.tmpdir}
         """
@@ -663,12 +747,15 @@ rule extract_snps_chrs:
     output:
         SNPINDELS_DIR + "chrs/{chrs_interval}.raw_snps.vcf",
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK}\
+        java -Xmx{resources.mem_mb}m -jar {GATK}\
             -T SelectVariants \
             -R {params.reference} \
             -V {input} \
@@ -683,12 +770,15 @@ rule extract_snps_contigs:
     output:
         SNPINDELS_DIR + "contigs.raw_snps.vcf"
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK}\
+        java -Xmx{resources.mem_mb}m -jar {GATK}\
             -T SelectVariants \
             -R {params.reference} \
             -V {input} \
@@ -706,12 +796,15 @@ rule filter_snps_chrs:
     output:
         SNPINDELS_DIR + "chrs/{chrs_interval}.filtered_snps.vcf"
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK}\
+        java -Xmx{resources.mem_mb}m -jar {GATK}\
             -T VariantFiltration \
             -R {params.reference} \
             -V {input} \
@@ -727,12 +820,15 @@ rule filter_snps_contigs:
     output:
         SNPINDELS_DIR + "contigs.filtered_snps.vcf"
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK}\
+        java -Xmx{resources.mem_mb}m -jar {GATK}\
             -T VariantFiltration \
             -R {params.reference} \
             -V {input} \
@@ -751,14 +847,17 @@ rule cat_snps:
     output:
         SNPINDELS_DIR + "SNPs.vcf"
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa",
         variants = " -V ".join(expand(SNPINDELS_DIR + "chrs/{chrs_interval}.filtered_snps.vcf", chrs_interval=chr_list) + \
                 [SNPINDELS_DIR + "contigs.filtered_snps.vcf"]),
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} -cp  {GATK} org.broadinstitute.gatk.tools.CatVariants \
+        java -cp  {GATK} org.broadinstitute.gatk.tools.CatVariants \
             -R {params.reference} \
             -V {params.variants} \
             -out {output} \
@@ -774,12 +873,15 @@ rule extract_indels_chrs:
     output:
         SNPINDELS_DIR + "chrs/{chrs_n_conts}.raw_indels.vcf"
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK}\
+        java -Xmx{resources.mem_mb}m -jar {GATK}\
             -T SelectVariants \
             -R {params.reference} \
             -V {input} \
@@ -794,12 +896,15 @@ rule extract_indels_contigs:
     output:
         SNPINDELS_DIR + "contigs.raw_indels.vcf"
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK}\
+        java -Xmx{resources.mem_mb}m -jar {GATK}\
             -T SelectVariants \
             -R {params.reference} \
             -V {input} \
@@ -818,12 +923,15 @@ rule filter_indels_chrs:
     output:
         SNPINDELS_DIR + "chrs/{chrs_interval}.filtered_indels.vcf"
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK}\
+        java -Xmx{resources.mem_mb}m -jar {GATK}\
             -T VariantFiltration \
             -R {params.reference} \
             -V {input} \
@@ -839,12 +947,15 @@ rule filter_indels_contigs:
     output:
         SNPINDELS_DIR + "contigs.filtered_indels.vcf"
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} {params.javamem} -jar {GATK}\
+        java -Xmx{resources.mem_mb}m -jar {GATK}\
             -T VariantFiltration \
             -R {params.reference} \
             -V {input} \
@@ -864,14 +975,17 @@ rule cat_indels:
     output:
         SNPINDELS_DIR + "Indels.vcf"
     params:
-        javamem = JAVA_MEM,
-        threads = THREADS,
         reference = REFERENCE + ".fa",
         variants = " -V ".join([SNPINDELS_DIR + "contigs.filtered_indels.vcf"] +\
                                 expand(SNPINDELS_DIR + "chrs/{chrs_interval}.filtered_indels.vcf", chrs_interval=chr_list)),
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000,
     shell:
         """
-        {JAVA_1P8} -cp  {GATK} org.broadinstitute.gatk.tools.CatVariants \
+        java -cp  {GATK} org.broadinstitute.gatk.tools.CatVariants \
             -R {params.reference} \
             -V {params.variants} \
             -out {output} \

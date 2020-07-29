@@ -1,13 +1,13 @@
 ## Input, output, and reference file paths
 
 # Directory containing raw FASTQ files. This should be a folder created within the variant_calling directory
-raw_fastq_dir: "relative/path/to/raw_fastq_dir/"
+raw_fastq_dir: "test/"
 # Directory containing the reference genome, bwa indices, and known variants (VCF) files
 reference_dir: "resources/reference_files/"
 # Basename of the reference genome file (no .fa extension)
 basename: ARS-UCD1.2_Btau5.0.1Y
 # File containing a list of contig names (not chromosome names)
-contigs_names_file: 'contignames.txt'
+contigs_names_file: 'ARS-UCD1.2_Btau5.0.1Y.fa.contigsNAMES.txt'
 # File containing known SNPs (can be vcf or bed)
 dbsnp: ARS1.2PlusY_BQSR.vcf.gz
 # Adapters file for QC trimming
@@ -22,10 +22,10 @@ r: R
 python: python
 bwa: bwa
 fastqc: fastqc
-trimmomatic: trimmomatic-0.38.jar
+trimmomatic: /home/eherman/soft/Trimmomatic-0.36/trimmomatic-0.36.jar
 samtools: samtools
-picard: picard.jar
-gatk: GenomeAnalysisTK.jar
+picard: /home/eherman/.local/bin/picard.jar
+gatk: /home/eherman/scratch/Stothard/FERTILITY/variant_calling/bins/GenomeAnalysisTK.jar
 
 ## Program parameters
 
