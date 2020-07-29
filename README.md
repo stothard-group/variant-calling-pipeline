@@ -56,8 +56,9 @@ the file `config/variant_calling.config.yaml`:
 
 - BWA 0.7.17
 - FastQC >= 0.11.7
+- Trimmomatic ~=0.36
 - samtools >= 1.8
-- picard == 2.18.2
+- picard == 2.18
 - GenomeAnalysisTK == 3.8-1-0-gf15c1c3ef
 
 Note: This specific version of GATK is required by the 1000 Bulls Run 8 
@@ -77,23 +78,25 @@ These can be installed in the R shell with
 `install.packages(c('caTools','ggplot2','gplots','gsalib','reshape'))`
 
 
-## Edit Config Files
+## Edit Configuration
 
-Two files within the `config` directory control all configurable options 
-in this workflow: `variant_calling.config.yaml` and 
-`variant_calling.clusterconfig.yaml`. Edit these files according to your 
-setup. 
+The file `config/variant_calling.config.yaml` controls all configurable options 
+relating to the workflow itself. For each rule within the snakemake file found in 
+`workflow/snakemake`, there are thread and resource specifications which can be 
+edited according to your setup. 
 
 All rules in the workflow are designed to run on a single node of a cluster 
 with up to 30 CPUs 
 and 100Gb RAM, with the exception of the local rules listed at the top of the 
-VariantCalling.sm file. 
+`workflow/snakemake` file. 
 
-Values in the clusterconfig.yaml file are listed for each rule and specify the 
+Cluster configuration values are listed for each rule and specify the 
 following slurm options:
-- n: cpus-per-task (-c)
-- time: time, format 0-00:00:00 (--time)
-- pmem: total memory, all values in mb (--mem)
+- threads: 1 # Number of threads to use for each job; should be equal to or less than cores
+- resources:
+	- cores = 1,  # Number of cpus available, or that will be requested from the scheduler
+	- runtime = 120,  # Requested walltime in minutes
+	- mem_mb = 4000,  # Requested memory in MB
 
 #### Add user-specific files to the reference_files directory
 
@@ -106,6 +109,7 @@ File names should be specified in `variant_calling.config.yaml`:
 - Picard sequence dictionary file (.dict) **
 - file containing a list of all contig names in the reference 
 genome, one item per line
+- vcf file containing known variants for base quality score recalibration
 
 For *Bos taurus* ARS-UCD1.2_Btau5.0.1Y, some of these files can downloaded from 
 [1000bullgenomes.com](http://www.1000bullgenomes.com/).
@@ -150,20 +154,21 @@ the contents of other output directories, see the [Workflow Readme](https://gith
 
 #### Command line options
 
-Once the appropriate changes are made to the config file,
- execute the workflow using the following command:
+Once the appropriate changes are made to the config file, edit the accountname 
+value to your own and execute the workflow using the following command:
 
 ```
-snakemake --snakefile VariantCalling.smk \
---cluster-config VariantCalling.clusterconfig.yaml \
---cluster "sbatch -N 1 -c {cluster.n} --mem={cluster.pmem} \
---time={cluster.time} --account=accountname" --rerun-incomplete \
---printshellcmds -j 10
+snakemake --cluster "sbatch -N 1 -c {cluster.n} \
+--mem={cluster.pmem} --time={cluster.time} --account=accountname" \
+--printshellcmds -j 10 --keep-going
 ```
-
 The `-j 10` option will run up to 10 jobs at a time. Add the option --dry-run 
 to check that the workflow is setup properly prior to executing jobs. 
 
 If the workflow is unexpectedly interrupted (e.g. by logging out of the 
-cluster), remove the hidden snakemake directory before starting a new run with 
-`rm -r .snakemake`. 
+cluster), unlock the directory with the `--unlock` option.
+
+If you have a [slurm profile](https://github.com/Snakemake-Profiles/slurm), you can run snakemake with the following command:
+```
+snakemake --slurm
+```
