@@ -105,9 +105,8 @@ rule final:
     input:
         expand(FASTQC_DIR + "{sample}_{RR}_fastqc.zip", sample=samples, RR=['R1', 'R2']),
         expand(RAW_FASTQ_DIR + "split/{sample}_R2_part{new}.fastq.gz", sample=samples, new=range(n_of_chunks)),
-        expand(FASTQC_DIR + "{sample}_R1_part1.trimP_fastqc.zip", sample=samples),
+        expand(FASTQC_DIR + "{sample}_R1_part{new}.trimP_fastqc.zip", sample=samples, new=range(n_of_chunks)),
         expand(ALIGN_DIR + "{sample}.m.bam", sample=samples),
-        expand(ALIGN_DIR + "{sample_list_val}_correct.txt", sample_list_val=list_of_samples),
         expand(RECAL_DIR + "{sample_list_val}.m.md.recal_plots.pdf", sample_list_val=list_of_samples),
         expand(STAT_DIR + "{sample_list_val}.m.md.recal.bam.stats.txt", sample_list_val=list_of_samples),
         expand(STAT_DIR + "{sample_list_val}.bam.depth.sample_summary", sample_list_val=list_of_samples),
@@ -190,18 +189,18 @@ rule trimmomatic:
 #########################################################################################
 rule fastqc_trimmed:
     input:
-        TRIMMED_DATA + "trimmomatic/{sample}_R1_part1.trimP.fastq.gz",
-        TRIMMED_DATA + "trimmomatic/{sample}_R2_part1.trimP.fastq.gz"
+        TRIMMED_DATA + "trimmomatic/{sample}_R1_part{new}.trimP.fastq.gz",
+        TRIMMED_DATA + "trimmomatic/{sample}_R2_part{new}.trimP.fastq.gz"
     output:
-        FASTQC_DIR + "{sample}_R1_part1.trimP_fastqc.zip",
-        FASTQC_DIR + "{sample}_R2_part1.trimP_fastqc.zip"
+        FASTQC_DIR + "{sample}_R1_part{new}.trimP_fastqc.zip",
+        FASTQC_DIR + "{sample}_R2_part{new}.trimP_fastqc.zip"
     threads: 4
     resources:
         cores = 4,
         runtime = 60,
         mem_mb = 4000,
     shell: 
-        "{FASTQC} -q -t {threads} --outdir {FASTQC_DIR} {input}"
+        "{FASTQC} -t {threads} --outdir {FASTQC_DIR} {input}"
 
 
 #########################################################################################
@@ -337,25 +336,6 @@ rule agg_and_dedup:
             MAX_RECORDS_IN_RAM=500000  \
             VALIDATION_STRINGENCY=LENIENT
         """
-
-rule check_merge:
-    input:
-        merge = ALIGN_DIR + "{sample_list_val}.m.md.bam"
-    params:
-        sample_val = "{sample_list_val}",
-        aln_dir = ALIGN_DIR
-    threads: 1
-    resources:
-        cores = 1,
-        runtime = 60,
-        mem_mb = 4000
-    output:
-        merge_check = ALIGN_DIR + "{sample_list_val}_correct.txt"
-    script:
-        """
-        workflow/scripts/bam_checker.py
-        """
-
 
 rule build_bai:
     input:
@@ -704,7 +684,6 @@ rule genotype_chrs:
             -T GenotypeGVCFs \
             -R {params.reference} \
             --variant {params.infiles}\
-            --num_threads {threads} \
             -o  {output.gt}
         """
 
@@ -727,12 +706,11 @@ rule genotype_contigs:
     shell:
         """
         mkdir -p {params.tmpdir}; \
-	    java -Xmx{resources.mem_mb}m -Djava.io.tmpdir={params.tmp}  -jar {GATK} \
+	    java -Xmx{resources.mem_mb}m -Djava.io.tmpdir={params.tmpdir}  -jar {GATK} \
             -T GenotypeGVCFs \
             -R {params.reference} \
             --disable_auto_index_creation_and_locking_when_reading_rods \
             --variant {params.infiles}\
-            -nct {threads} \
             -o  {output.gt}; \
         rm -rf {params.tmpdir}
         """
