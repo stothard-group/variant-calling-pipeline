@@ -27,7 +27,7 @@ Call genotypes in each sample.
 
 ### 2. Merge genotype calls
 
-**Rule: smoove_merge
+**Rule: smoove_merge**
 
 Get the union of all sites across all samples as a single VCF file.
 
