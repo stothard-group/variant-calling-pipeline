@@ -96,13 +96,13 @@ The structure of the CNV calls output file,
  `results/cnvnator/{sample}.cnvnator.txt`, can be found on the 
  [CNVnator website](https://github.com/abyzovlab/CNVnator).
  
-9. Export CNV calls to VCF file
+### 9. Export CNV calls to VCF file
 
 **Rule: cnvnator_to_vcf**
 
 CNV calls are exported as VCFs using the script `cnvnator2VCF.pl`.
 
-10. Filter CNVnator VCF file
+### 10. Filter CNVnator VCF file
 
 **Rule: cnvnator_filter**
 
@@ -111,7 +111,7 @@ SnpSift is used to filter the CNVnator results using the following criteria:
  - eval-2 < 0.05
  - q0 < 0.5
  
-11. Plot CNVs
+### 11. Plot CNVs
 
 **Rule: cnvnator_plot**
 
