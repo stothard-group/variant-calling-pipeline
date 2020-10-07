@@ -5,6 +5,8 @@
 For details, see 
 [1000bullsGATK3.8pipelineSpecifications_Run8_Revision_20191101](1000bullsGATK3.8pipelineSpecifications_Run8_Revision_20191101.docx)
 
+For the related SV calling workflow, see [the SV calling README document](SV_calling_README.md)
+
 **SECTIONS**
 
 [Installation](#installation)
@@ -154,21 +156,14 @@ the contents of other output directories, see the [Workflow Readme](https://gith
 
 #### Command line options
 
-Once the appropriate changes are made to the config file, edit the accountname 
-value to your own and execute the workflow using the following command:
+Resource allocations are given within each rule, and it is strongly 
+recommended that users create or use a snakemake profile to run the workflow.
 
+For example, if you have a [slurm profile](https://github.com/Snakemake-Profiles/slurm), 
+you can run snakemake with the following command:
 ```
-snakemake --cluster "sbatch -N 1 -c {cluster.n} \
---mem={cluster.pmem} --time={cluster.time} --account=accountname" \
---printshellcmds -j 10 --keep-going
+snakemake --profile slurm
 ```
-The `-j 10` option will run up to 10 jobs at a time. Add the option --dry-run 
-to check that the workflow is setup properly prior to executing jobs. 
 
-If the workflow is unexpectedly interrupted (e.g. by logging out of the 
-cluster), unlock the directory with the `--unlock` option.
-
-If you have a [slurm profile](https://github.com/Snakemake-Profiles/slurm), you can run snakemake with the following command:
-```
-snakemake --slurm
-```
+[This guide](https://github.com/stothard-group/variant-calling-pipeline/blob/master/slurm_setup.md) 
+can be used to set up a slurm profile. Other profiles can be found [here](https://github.com/snakemake-profiles/doc)
