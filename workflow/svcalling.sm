@@ -22,14 +22,8 @@ GENOME_FULL = REFERENCE_DIR + REFERENCE_GENOME + ".fa"
 PARTITION = config["partition"]
 ANNOTATION_GFF = config["annotation_gff"]
 
-java_path = config["java"]
-samtools_path = config["samtools"]
-bcftools_path = config["bcftools"]
 smoove_path = config["smoove"]
 samplot_path = config["samplot"]
-cnvnator_path = config["cnvnator"]
-cnvnator2VCF_path = config["cnvnator2VCF"]
-
 
 samples, = glob_wildcards(join(ALIGNMENT_DIR, "{sample}.m.md.bam"))
 
@@ -54,10 +48,11 @@ rule make_fai:
         GENOME_FULL + ".fai"
     shell:
         """
+        module load StdEnv/2020
         module load samtools
         module load bcftools
         module load htslib
-        {samtools_path} faidx {input}
+        samtools faidx {input}
         """
 
 rule make_bai:
@@ -68,10 +63,11 @@ rule make_bai:
     priority: 1
     shell:
         """
+        module load StdEnv/2020
         module load samtools
         module load bcftools
         module load htslib
-        {samtools_path} index {input}
+        samtools index {input}
         """
 
 
@@ -89,6 +85,7 @@ rule smoove_call:
         SMOOVE_DIR + "{sample}-smoove.genotyped.vcf.gz"
     shell:
         """
+        module load StdEnv/2020
         module load samtools
         module load bcftools
         module load htslib
@@ -109,6 +106,7 @@ rule smoove_merge:
         SMOOVE_DIR + "merged.sites.vcf.gz"
     shell:
         """
+        module load StdEnv/2020
         module load samtools
         module load bcftools
         module load htslib
@@ -130,6 +128,7 @@ rule smoove_genotype:
         GENOTYPE_DIR + "{sample}-joint-smoove.genotyped.vcf.gz"
     shell:
         """
+        module load StdEnv/2020
         module load samtools
         module load bcftools
         module load htslib
@@ -150,6 +149,7 @@ rule smoove_paste:
         mem_mb = 8000,
     shell:
         """
+        module load StdEnv/2020
         module load samtools
         module load bcftools
         module load htslib
@@ -170,6 +170,7 @@ rule smoove_annotate:
         mem_mb = 8000,
     shell:
         """
+        module load StdEnv/2020
         module load samtools
         module load bcftools
         module load htslib
@@ -189,7 +190,7 @@ rule smoove_filter:
     shell:
         """
         module load java/1.8.0_192
-        {java_path} -Xmx2g -jar /cvmfs/soft.computecanada.ca/easybuild/software/2017/Core/snpeff/4.3t/SnpSift.jar  filter " ((( MSHQ > 3 ) & (SVTYPE = 'BND')) | (( MSHQ > 3 ) & (SVTYPE = 'INS')) | (( MSHQ > 3 ) & (SVTYPE = 'DEL') & ( GEN[*].DHFFC < 0.7) ) | (( MSHQ > 3 ) & (SVTYPE = 'DUP') & ( GEN[*].DHFFC > 1.25))) " {input} > {output}
+        java -Xmx2g -jar /cvmfs/soft.computecanada.ca/easybuild/software/2017/Core/snpeff/4.3t/SnpSift.jar  filter " ((( MSHQ > 3 ) & (SVTYPE = 'BND')) | (( MSHQ > 3 ) & (SVTYPE = 'INS')) | (( MSHQ > 3 ) & (SVTYPE = 'DEL') & ( GEN[*].DHFFC < 0.7) ) | (( MSHQ > 3 ) & (SVTYPE = 'DUP') & ( GEN[*].DHFFC > 1.25))) " {input} > {output}
         """
 
 rule smoove_plot:
@@ -207,6 +208,7 @@ rule smoove_plot:
         out = SMOOVE_PLOT_DIR + "{sample}",
     shell:
         """
+        module load StdEnv/2020
         module load samtools
         module load bcftools
         module load htslib
@@ -228,22 +230,26 @@ rule cnvnator:
         runtime = 120,
         mem_mb = 16000,
     output:
-        CNV_DIR + "{sample}.cnvnator.txt"
+        cnv_out = CNV_DIR + "{sample}.cnvnator.txt",
+        cnv_complete = CNV_DIR + "{sample}.complete.txt"
     
     shell:
          """
          module load python/2.7
          module load gcc/8.3 cnvnator root
+         rm -f {params.root}.root
          cnvnator -root {params.root}.root -tree {input}
          cnvnator -root {params.root}.root -his {PARTITION} -d {params.genome}
          cnvnator -root {params.root}.root -stat {PARTITION}
          cnvnator -root {params.root}.root -partition {PARTITION}
-         cnvnator -root {params.root}.root -call {PARTITION} > {output}
+         cnvnator -root {params.root}.root -call {PARTITION} > {output.cnv_out}
+         touch {output.cnv_complete} && rm {params.root}.root
          """
 
 rule cnvnator_to_vcf:
     input:
-         CNV_DIR + "{sample}.cnvnator.txt"
+         cnv_in = CNV_DIR + "{sample}.cnvnator.txt",
+         cnv_check = CNV_DIR + "{sample}.complete.txt"
     params:
          genome = "genome",
          prefix = "{sample}",
@@ -252,7 +258,9 @@ rule cnvnator_to_vcf:
          CNV_DIR + "{sample}.cnvnator.vcf"
     shell:
          """
-         cnvnator2VCF.pl -prefix {params.prefix} -reference {REFERENCE_GENOME} {input} {params.genome} > {output}
+         module load python/2.7
+         module load gcc/8.3 cnvnator root
+         cnvnator2VCF.pl -prefix {params.prefix} -reference {REFERENCE_GENOME} {input.cnv_in} {params.genome} > {output}
          sed -i 's;{params.replace_str};{params.prefix};g' {output}
          """
 rule cnvnator_filter:
@@ -268,7 +276,7 @@ rule cnvnator_filter:
     shell:
          """
          module load java/1.8.0_192
-         {java_path} -Xmx2g -jar {SNPSIFT_EX}  filter " ((natorP1 < 0.05) & (natorP2 < 0.05) & (natorQ0 < 0.5)) " {input} > {output}
+         java -Xmx2g -jar {SNPSIFT_EX}  filter " ((natorP1 < 0.05) & (natorP2 < 0.05) & (natorQ0 < 0.5)) " {input} > {output}
          """
 rule cnvnator_plot:
     input:
@@ -286,6 +294,7 @@ rule cnvnator_plot:
         command = CNV_PLOT_DIR + "{sample}_samplot_commands.txt"
     shell:
         """
+        module load StdEnv/2020
         module load samtools
         module load bcftools
         module load htslib
