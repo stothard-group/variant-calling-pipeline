@@ -95,11 +95,11 @@ that decreasing the partition size will likely require an increase in requested
 runtime and memory for the rule `cnvnator`.
 
 For information on parameters used for filtering, see the 
-[SV Calling Workflow](#fill-in).
+[SV Calling Workflow](https://github.com/stothard-group/variant-calling-pipeline/blob/master/SV_calling_workflow.md).
 
 ## Running the SV calling workflow
 
-If you do not have a slurm profile, [set one up here](##Fill in).
+If you do not have a slurm profile, [set one up here](https://github.com/stothard-group/variant-calling-pipeline/blob/master/slurm_setup.md).
 
 The workflow can now be run with the following command:
 
