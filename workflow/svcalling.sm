@@ -1,13 +1,11 @@
 ## smoove and cnvnator workflow
 from os.path import join
 
-shell.prefix("module load python/3.7 ; ")
-
-configfile: "config/svcalling_cc.config.yaml"
+configfile: "config/svcalling.config.yaml"
 localrules: cnvnator_to_vcf, make_fai, make_bai
 
 RESULTS_DIR = "results/"
-ALIGNMENT_DIR = RESULTS_DIR + "alignment/"
+BASE_QUALITY_RECAL = RESULTS_DIR + "base_quality_recal/"
 SMOOVE_DIR = RESULTS_DIR + "smoove/"
 CNV_DIR = RESULTS_DIR + "cnvnator/"
 GENOTYPE_DIR = RESULTS_DIR + "smoove/genotyped/"
@@ -24,15 +22,17 @@ ANNOTATION_GFF = config["annotation_gff"]
 
 smoove_path = config["smoove"]
 samplot_path = config["samplot"]
+java_path = config["java"]
 
-samples, = glob_wildcards(join(ALIGNMENT_DIR, "{sample}.m.md.bam"))
+samples, = glob_wildcards(join(BASE_QUALITY_RECAL, "{sample}.m.md.recal.bam"))
 
 
 rule final:
     input:
         GENOME_FULL + ".fai",
-        expand(ALIGNMENT_DIR + "{sample}.m.md.bam.bai", sample=samples),
+        expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam.bai", sample=samples),
         expand(CNV_DIR + "{sample}.cnvnator.txt", sample=samples),
+        expand(SMOOVE_DIR + "{sample}-smoove.genotyped.vcf.gz", sample=samples),
         expand(GENOTYPE_DIR + "results.smoove.square.anno.filter.vcf"),
         expand(SMOOVE_PLOT_DIR + "{sample}/index.html", sample=samples),
         expand(CNV_PLOT_DIR + "{sample}/index.html", sample=samples)
@@ -46,57 +46,55 @@ rule make_fai:
         GENOME_FULL
     output:
         GENOME_FULL + ".fai"
+    priority: 1
+    singularity:
+        "smoove.sif"
     shell:
         """
-        module load StdEnv/2020
-        module load samtools
-        module load bcftools
-        module load htslib
         samtools faidx {input}
         """
 
 rule make_bai:
     input:
-        ALIGNMENT_DIR + "{sample}.m.md.bam"
+        BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
     output:
-        ALIGNMENT_DIR + "{sample}.m.md.bam.bai"
+        BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam.bai"
     priority: 1
+    singularity:
+        "smoove.sif"
     shell:
         """
-        module load StdEnv/2020
-        module load samtools
-        module load bcftools
-        module load htslib
         samtools index {input}
         """
 
 
 rule smoove_call:
     input:
-        ALIGNMENT_DIR + "{sample}.m.md.bam"
+        BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
     params:
         sam = lambda wildcards: wildcards.sample
     threads: 2
     resources:
         cores = 2,
-        runtime = 60,
+        runtime = 240,
         mem_mb = 16000,
+    singularity:
+        "smoove.sif"
     output:
         SMOOVE_DIR + "{sample}-smoove.genotyped.vcf.gz"
     shell:
         """
-        module load StdEnv/2020
-        module load samtools
-        module load bcftools
-        module load htslib
-        {smoove_path} call --outdir {SMOOVE_DIR} --name {params.sam} --fasta {GENOME_FULL} -p {threads} --genotype {input} 
+        smoove call --outdir {SMOOVE_DIR} --name {params.sam} --fasta {GENOME_FULL} -p {threads} --genotype {input} 
         """
+
 
 rule smoove_merge:
     input:
         expand(SMOOVE_DIR + "{sample}-smoove.genotyped.vcf.gz", sample=samples)
     params:
         SMOOVE_DIR + "*.genotyped.vcf.gz"
+    singularity:
+        "smoove.sif"
     threads: 2
     resources:
         cores = 2,
@@ -106,33 +104,27 @@ rule smoove_merge:
         SMOOVE_DIR + "merged.sites.vcf.gz"
     shell:
         """
-        module load StdEnv/2020
-        module load samtools
-        module load bcftools
-        module load htslib
-        {smoove_path} merge --name merged -f {GENOME_FULL} --outdir {SMOOVE_DIR} {params}
+        smoove merge --name merged -f {GENOME_FULL} --outdir {SMOOVE_DIR} {params}
         """
 
 rule smoove_genotype:
     input:
-        bam = ALIGNMENT_DIR + "{sample}.m.md.bam",
+        bam = BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam",
         merged = SMOOVE_DIR + "merged.sites.vcf.gz"
     params:
         sam = lambda wildcards: wildcards.sample
     threads: 2
     resources:
         cores = 2,
-        runtime = 60,
+        runtime = 240,
         mem_mb = 8000,
+    singularity:
+        "smoove.sif"
     output:
         GENOTYPE_DIR + "{sample}-joint-smoove.genotyped.vcf.gz"
     shell:
         """
-        module load StdEnv/2020
-        module load samtools
-        module load bcftools
-        module load htslib
-        {smoove_path} genotype -d -x -p {threads} --name {params.sam}-joint --outdir {GENOTYPE_DIR} --fasta {GENOME_FULL} --vcf {input.merged} {input.bam}
+        smoove genotype -d -x -p {threads} --name {params.sam}-joint --outdir {GENOTYPE_DIR} --fasta {GENOME_FULL} --vcf {input.merged} {input.bam}
         """
 
 rule smoove_paste:
@@ -143,17 +135,15 @@ rule smoove_paste:
     params:
         GENOTYPE_DIR + "*.vcf.gz"
     threads: 2
+    singularity:
+        "smoove.sif"
     resources:
         cores = 2,
         runtime = 60,
         mem_mb = 8000,
     shell:
         """
-        module load StdEnv/2020
-        module load samtools
-        module load bcftools
-        module load htslib
-        {smoove_path} paste --name results {params}
+        smoove paste --name results {params}
         mv results.smoove.square.vcf.gz {output}
         """
 
@@ -168,13 +158,11 @@ rule smoove_annotate:
         cores = 2,
         runtime = 60,
         mem_mb = 8000,
+    singularity:
+        "smoove.sif"
     shell:
         """
-        module load StdEnv/2020
-        module load samtools
-        module load bcftools
-        module load htslib
-        {smoove_path} annotate --gff {input.annot} {input.square} > {output}
+        smoove annotate --gff {input.annot} {input.square} > {output}
         """
 
 rule smoove_filter:
@@ -189,30 +177,28 @@ rule smoove_filter:
         mem_mb = 2000,
     shell:
         """
-        module load java/1.8.0_192
-        java -Xmx2g -jar /cvmfs/soft.computecanada.ca/easybuild/software/2017/Core/snpeff/4.3t/SnpSift.jar  filter " ((( MSHQ > 3 ) & (SVTYPE = 'BND')) | (( MSHQ > 3 ) & (SVTYPE = 'INS')) | (( MSHQ > 3 ) & (SVTYPE = 'DEL') & ( GEN[*].DHFFC < 0.7) ) | (( MSHQ > 3 ) & (SVTYPE = 'DUP') & ( GEN[*].DHFFC > 1.25))) " {input} > {output}
+        {java_path} -Xmx2g -jar {SNPSIFT_EX}  filter " ((( MSHQ > 3 ) & (SVTYPE = 'BND')) | (( MSHQ > 3 ) & (SVTYPE = 'INS')) | (( MSHQ > 3 ) & (SVTYPE = 'DEL') & ( GEN[*].DHFFC < 0.7) ) | (( MSHQ > 3 ) & (SVTYPE = 'DUP') & ( GEN[*].DHFFC > 1.25))) " {input} > {output}
         """
 
 rule smoove_plot:
     input:
         results = GENOTYPE_DIR + "results.smoove.square.anno.filter.vcf",
-        bam = ALIGNMENT_DIR + "{sample}.m.md.bam",
+        bam = BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam",
     output:
         SMOOVE_PLOT_DIR + "{sample}/index.html"
     threads: 1
     resources:
         cores = 1,
-        runtime = 120,
-        mem_mb = 1000,
+        runtime = 360,
+        mem_mb = 8000,
     params:
         out = SMOOVE_PLOT_DIR + "{sample}",
+        command = SMOOVE_PLOT_DIR + "{sample}.samplot_vcf_cmds.tmp"
+    singularity:
+        "samplot.sif"
     shell:
         """
-        module load StdEnv/2020
-        module load samtools
-        module load bcftools
-        module load htslib
-        {samplot_path} vcf --vcf {input.results} -d {params.out} -O png -b {input.bam}
+        samplot vcf --command_file {params.command} --vcf {input.results} -d {params.out} -O png -b {input.bam}
         """
 
 #########################################################################################
@@ -222,21 +208,21 @@ rule smoove_plot:
 
 rule cnvnator:
     input:
-         ALIGNMENT_DIR + "{sample}.m.md.bam"
+         BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
     params:
         genome = "genome",
         root = lambda wildcards: wildcards.sample
     resources:
-        runtime = 120,
+        cores = 1,
+        runtime = 720,
         mem_mb = 16000,
     output:
         cnv_out = CNV_DIR + "{sample}.cnvnator.txt",
         cnv_complete = CNV_DIR + "{sample}.complete.txt"
-    
+    singularity:
+        "cnvnator.sif"
     shell:
          """
-         module load python/2.7
-         module load gcc/8.3 cnvnator root
          rm -f {params.root}.root
          cnvnator -root {params.root}.root -tree {input}
          cnvnator -root {params.root}.root -his {PARTITION} -d {params.genome}
@@ -245,6 +231,7 @@ rule cnvnator:
          cnvnator -root {params.root}.root -call {PARTITION} > {output.cnv_out}
          touch {output.cnv_complete} && rm {params.root}.root
          """
+
 
 rule cnvnator_to_vcf:
     input:
@@ -256,13 +243,15 @@ rule cnvnator_to_vcf:
          replace_str = CNV_DIR + "{sample}"
     output:
          CNV_DIR + "{sample}.cnvnator.vcf"
+    singularity:
+        "cnvnator.sif"
     shell:
          """
-         module load python/2.7
-         module load gcc/8.3 cnvnator root
          cnvnator2VCF.pl -prefix {params.prefix} -reference {REFERENCE_GENOME} {input.cnv_in} {params.genome} > {output}
          sed -i 's;{params.replace_str};{params.prefix};g' {output}
          """
+
+
 rule cnvnator_filter:
     input:
          CNV_DIR + "{sample}.cnvnator.vcf"
@@ -275,28 +264,26 @@ rule cnvnator_filter:
         mem_mb = 2000,
     shell:
          """
-         module load java/1.8.0_192
-         java -Xmx2g -jar {SNPSIFT_EX}  filter " ((natorP1 < 0.05) & (natorP2 < 0.05) & (natorQ0 < 0.5)) " {input} > {output}
+         {java_path} -Xmx2g -jar {SNPSIFT_EX}  filter " ((natorP1 < 0.05) & (natorP2 < 0.05) & (natorQ0 < 0.5)) " {input} > {output}
          """
+
 rule cnvnator_plot:
     input:
         vcf = CNV_DIR + "{sample}.cnvnator.filter.vcf",
-        bam = ALIGNMENT_DIR + "{sample}.m.md.bam"
+        bam = BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
     output:
         CNV_PLOT_DIR + "{sample}/index.html"
     threads: 1
     resources:
         cores = 1,
-        runtime = 120,
-        mem_mb = 1000,
+        runtime = 360,
+        mem_mb = 8000,
     params:
         out = CNV_PLOT_DIR + "{sample}",
         command = CNV_PLOT_DIR + "{sample}_samplot_commands.txt"
+    singularity:
+        "samplot.sif"
     shell:
         """
-        module load StdEnv/2020
-        module load samtools
-        module load bcftools
-        module load htslib
-        {samplot_path} vcf --vcf {input.vcf} -d {params.out} -O png -b {input.bam} --command_file {params.command}
+        samplot vcf --vcf {input.vcf} -d {params.out} -O png -b {input.bam} --command_file {params.command}
         """

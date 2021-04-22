@@ -23,20 +23,49 @@ Requirements:
 
 ## Required programs to run the workflow
 
-These programs must be in your path or specified in the file `config/sv_calling.config.yaml`:
+### Installing programs to run the workflow in an HPC environment
+
+If the workflow is being used in a High Performance Computing environment such 
+as Compute Canada, it is recommended that the following Docker containers are 
+downloaded and made into Singularity image files. When running the workflow, 
+you must also use the --use-singularity flag. 
+
+ - [smoove](https://hub.docker.com/r/brentp/smoove/) as the image file `smoove.sif`
+ - [cnvnator](https://hub.docker.com/r/chrishah/cnvnator-docker) as the image 
+   file `cnvnator.sif` 
+ - [samplot](https://hub.docker.com/r/dceoy/samplot) as the image file `samplot.sif`
+   
+To create these images using Singularity, run the following command:
+
+`singularity build myimage.sif docker://docker_image`
+
+The images should be stored in the working directory.
+
+The program SnpSift is also required, and the path to the SnpSift.jar file must 
+be specified in `config/svcalling.config.yaml`:
+
+- [SnpSift >= 4.3t](https://pcingola.github.io/SnpEff/)
+  
+### Installing programs to run the workflow in other environments
+The following programs and all of their dependencies must be in your path:
 
  - [smoove >= 0.2.5](https://github.com/brentp/smoove)
- - [SnpSift >= 4.3t](https://pcingola.github.io/SnpEff/) (The path to SnpSift.jar must be specified in the `config/sv_calling.config.yaml`
- configuration file)
  - [samplot](https://github.com/ryanlayer/samplot)
+ - [cnvnator](https://github.com/abyzovlab/CNVnator)
 
-All other programs called by the workflow are loaded as software modules.
+The path to the SnpSift.jar file must be specified in 
+`config/svcalling.config.yaml`:
+
+- [SnpSift >= 4.3t](https://pcingola.github.io/SnpEff/)
 
  
 ## Edit Config File
 
 The file `config/sv_calling.config.yaml` controls all configurable options 
-relating to the workflow itself. For each rule within the snakemake file found in 
+relating to the workflow itself. Note that if java is not in your path, you will 
+ need to specify the path to the executable in this file.
+
+For each rule within the snakemake file found in 
 `workflow/svcalling.sm`, there are thread and resource specifications which can be 
 edited according to your setup. 
 
@@ -99,10 +128,25 @@ For information on parameters used for filtering, see the
 
 ## Running the SV calling workflow
 
+### HPC clusters
 If you do not have a slurm profile, [set one up here](https://github.com/stothard-group/variant-calling-pipeline/blob/master/slurm_setup.md).
 
-The workflow can now be run with the following command:
+The workflow can be run with the following command:
 
 ```
-snakemake --snakefile svcalling.sm --profile slurm
+snakemake --snakefile svcalling.sm --profile slurm --use-singularity \
+--singularity-args "-B /paths/to/dirs/needed/by/programs/"
+```
+
+To run the workflow without a slurm profile, use:
+
+```
+snakemake --snakefile svcalling.sm --cluster "sbatch -N 1 -c {threads} \
+--mem={resources.mem_mb} --time={resources.runtime} --account=account_name" \
+--use-singularity --singularity-args "-B /paths/to/dirs/needed/by/programs/"
+```
+
+### Usage on other platforms
+```
+snakemake --snakefile svcalling.sm 
 ```

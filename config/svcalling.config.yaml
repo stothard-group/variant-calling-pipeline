@@ -1,23 +1,18 @@
 ## Reference file paths and parameters for SV calling
 
-# Directory containing the reference genome and annotation vcf file
-reference_dir: "resources/reference_files/"
+# Directory containing the reference genome
+reference_dir: "/path/to/dir/with/reference/"
 # Basename of the reference genome file (no .fa extension)
 basename: ARS-UCD1.2_Btau5.0.1Y
 # Path to GFF file containing gene annotations
-annotation_gff: "resources/reference_files/ARS-UCD1.2_Btau5.0.1Y.gff"
+annotation_gff: "/path/to/annotation/gff/file/ARS-UCD1.2_Btau5.0.1Y.gff"
 
 # Path to the SnpSift.jar executable
-#snpsift_executable: "path/to/SnpSift.jar"
-snpsift_executable: "/home/eherman/soft/snpEff/SnpSift.jar"
+snpsift_executable: "path/to/SnpSift.jar"
 
-# If the following programs are not in your path, replace the command with the full path
 
-# smoove
-smoove: "smoove"
-# samplot
-samplot: "samplot"
-
+# java
+java: "java"
 
 # Number of partitions to use for CNVnator
 # Note: if partition size is decreased, the amount of RAM and time
