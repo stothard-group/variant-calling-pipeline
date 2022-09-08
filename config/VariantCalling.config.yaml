@@ -1,0 +1,62 @@
+## Input, output, and reference file paths
+
+# Directory containing raw FASTQ files. This should be a folder created within the variant_calling directory
+raw_fastq_dir: "/home/eherman/scratch/Stothard/DAIRY/dairy_variant_pipeline/raw_files/"
+# Directory containing the reference genome, bwa indices, and known variants (VCF) files
+reference_dir: "/home/eherman/scratch/Stothard/FERTILITY/variant_calling/resources/reference_files/"
+# Basename of the reference genome file (no .fa extension)
+basename: ARS-UCD1.2_Btau5.0.1Y
+# File containing a list of contig names (not chromosome names) in the reference file directory
+contigs_names_file: 'ARS-UCD1.2_Btau5.0.1Y.fa.contigsNAMES.txt'
+# File containing known SNPs (can be vcf or bed)
+dbsnp: "/home/eherman/scratch/Stothard/1000bulls_round7_ReadMapping/Reference/ARS1.2PlusY_BQSR_v3.vcf.gz"
+# Adapters file for QC trimming
+adapters:
+        trimmomatic: TruSeq3-PE-2_NexteraPE-PE.fa
+
+
+## Paths to program executables
+## If these programs are not in your path, edit the values to the absolute path to each executable file
+
+r: R
+python: python
+bwa: bwa
+fastqc: fastqc
+trimmomatic: /home/eherman/soft/Trimmomatic-0.36/trimmomatic-0.36.jar
+samtools: samtools
+picard: /home/eherman/.local/bin/picard.jar
+gatk: /home/eherman/scratch/Stothard/FERTILITY/variant_calling/bins/GenomeAnalysisTK.jar
+
+## Program parameters
+
+# Number of chunks to split raw fastq files into (files should be smaller than 100M reads)
+n_of_chunks: 5
+# Each read file contains R1 or R2 in the filenames
+read_index: ['1', '2']
+# This value is 100 for data generated on non-arrayed flowcells (ie from GAIIx, HiSeq1500/2000/2500), or 2500 for arrayed flowcell data (eg HiSeqX, HiSeq3000/4000, NovaSeq). Note these are all Illumina instruments, if you have data from other instruments you must work with the supplier to determine this value. See https://sequencing.qcfail.com/articles/illumina-patterned-flow-cells-generate-duplicated-sequences/
+optical_duplicate_pixel_distance: 2500
+# Type of file containing known SNPs (can be vcf or bed)
+dbsnp_format: vcf
+# Number of contigs to process per job for variant calling
+n_of_contigs: 100
+# Chromosome information
+autosomes_range_first: 1
+autosomes_range_last: 29
+other_chrs: ['X', 'Y', 'MT']
+# Internal value, do not change
+chr_prefix: ''
+
+
+## Thread and Java memory parameters - any changes made here must also be made
+## in the corresponding rules in the clusterconfig.yaml file, to avoid
+## disagreements between requested and available memory.
+
+threads:
+        def: 1
+        med: 4
+        big: 30
+
+java_mem:
+        def: -Xmx7500m
+        med: -Xmx30g
+        big: -Xmx100g

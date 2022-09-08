@@ -1,0 +1,981 @@
+## smoove and cnvnator workflow
+from os.path import join, exists, basename
+import pandas as pd
+
+configfile: "config/svcalling.config.yaml"
+localrules: cnvnator_to_vcf, make_fai, make_bai, pindel_config, bgzip_chromstats, survivor
+
+RESULTS_DIR = "20_genomes_results/"
+#RESULTS_DIR = "results/"
+BASE_QUALITY_RECAL = RESULTS_DIR + "base_quality_recal/"
+#BASE_QUALITY_RECAL = "/home/eherman/projects/rpp-stothard/eherman/dairy/base_quality_recal/"
+STATS_DIR = RESULTS_DIR + "stat_and_coverage/"
+SMOOVE_DIR = RESULTS_DIR + "smoove/"
+CNV_DIR = RESULTS_DIR + "cnvnator/"
+GENOTYPE_DIR = RESULTS_DIR + "smoove/genotyped/"
+SMOOVE_PLOT_DIR = RESULTS_DIR + "smoove/plots/"
+CNV_PLOT_DIR = RESULTS_DIR + "cnvnator/plots/"
+PINDEL = RESULTS_DIR + "pindel/"
+BREAKDANCER_DIR = RESULTS_DIR + "breakdancer/"
+MANTA_DIR = RESULTS_DIR + "manta/"
+GRIDSS_DIR = RESULTS_DIR + "gridss/"
+DELLY_DIR = RESULTS_DIR + "delly/"
+SURVIVOR_DIR = RESULTS_DIR + "survivor/"
+
+CONCISE = GENOTYPE_DIR + "concise_samplot.py"
+SNPSIFT_EX = config["snpsift_executable"]
+
+REFERENCE_DIR = config["reference_dir"]
+REFERENCE_GENOME = config["basename"]
+GENOME_FULL = REFERENCE_DIR + REFERENCE_GENOME + ".fa"
+PARTITION = config["partition"]
+PICARD = config["picard"]
+ANNOTATION_GFF = config["annotation_gff"]
+CHROMSTATS = config["chromstats"]
+EXCLUDE = config["exclude"]
+BD2VCF = config["bd2vcf"]
+GRIDSS_TOOL = config["gridss_tool"]
+GRIDSS_JAR = config["gridss_jar"]
+
+java_path = config["java"]
+
+# Genomic intervals
+chr_list = [config["chr_prefix"] + str(i) for i in range(int(config["autosomes_range_first"]), int(config["autosomes_range_last"]) + 1)] + config["other_chrs"]
+
+# Pindel types
+pindel_types = ['D', 'INS', "SI", "TD"]
+
+#samples, = glob_wildcards(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam")
+samples = ["4785", "4762", "4804", "4795"]
+
+
+
+rule final:
+    input:
+        GENOME_FULL + ".fai",
+        expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam.bai", sample=samples),
+#        expand(GENOTYPE_DIR + "results.smoove.square.anno.filter.vcf"),
+#        RESULTS_DIR + "pindel_config.txt",
+        expand(PINDEL+ "{sample}.pindel.INS.vcf.gz",sample=samples),
+        expand(MANTA_DIR + "{sample}.manta.INS.vcf.gz", sample=samples),
+        PINDEL + "pindel_output.all.vcf.gz",
+#        CHROMSTATS + ".gz.tbi",
+#        MANTA_DIR + "runWorkflow.py",
+        MANTA_DIR + "results/variants/diploidSV.vcf.gz",
+        RESULTS_DIR + "SV.vcf.gz"
+
+#rule auxiliary:
+#    input:
+#        expand(CNV_DIR + "{sample}.cnvnator.txt", sample=samples),
+#        expand(CNV_PLOT_DIR + "{sample}/index.html", sample=samples),
+#        expand(SMOOVE_PLOT_DIR + "{sample}/index.html", sample=samples),
+#        expand(BREAKDANCER_DIR + "breakdancer_output.{chr}.vcf", chr=chr_list)
+#        DELLY_DIR + "delly.genotyped.joint.filt.bcf",
+#        expand(GRIDSS_DIR+ "{sample}.m.md.recal.bam.gridss.working/{sample}.m.md.recal.bam.sv.bam.bai", sample=samples),
+#        GRIDSS_DIR + "assembly.bam",
+#        GRIDSS_DIR + "gridss_output.vcf"
+
+
+#########################################################################################
+# Smoove
+#########################################################################################
+rule make_fai:
+    input:
+        GENOME_FULL
+    output:
+        GENOME_FULL + ".fai"
+    priority: 1
+    singularity:
+        "smoove.sif"
+    shell:
+        """
+        samtools faidx {input}
+        """
+
+rule make_bai:
+    input:
+        BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
+    output:
+        BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam.bai"
+    priority: 1
+    singularity:
+        "smoove.sif"
+    shell:
+        """
+        samtools index {input}
+        """
+
+
+rule smoove_call:
+    input:
+        BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
+    params:
+        sam = lambda wildcards: wildcards.sample
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 360,
+        mem_mb = 16000
+    singularity:
+        "smoove.sif"
+    output:
+        SMOOVE_DIR + "{sample}-smoove.genotyped.vcf.gz"
+    shell:
+        """
+        smoove call --outdir {SMOOVE_DIR} --name {params.sam} --fasta {GENOME_FULL} -p {threads} --genotype {input} 
+        """
+
+
+rule smoove_merge:
+    input:
+        expand(SMOOVE_DIR + "{sample}-smoove.genotyped.vcf.gz", sample=samples)
+    params:
+        SMOOVE_DIR + "*.genotyped.vcf.gz"
+    singularity:
+        "smoove.sif"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000
+    output:
+        SMOOVE_DIR + "merged.sites.vcf.gz"
+    shell:
+        """
+        smoove merge --name merged -f {GENOME_FULL} --outdir {SMOOVE_DIR} {params}
+        """
+
+rule smoove_genotype:
+    input:
+        bam = BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam",
+        merged = SMOOVE_DIR + "merged.sites.vcf.gz"
+    params:
+        sam = lambda wildcards: wildcards.sample
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 420,
+        mem_mb = 8000
+    singularity:
+        "smoove.sif"
+    output:
+        GENOTYPE_DIR + "{sample}-joint-smoove.genotyped.vcf.gz"
+    shell:
+        """
+        smoove genotype -d -x -p {threads} --name {params.sam}-joint --outdir {GENOTYPE_DIR} --fasta {GENOME_FULL} --vcf {input.merged} {input.bam}
+        """
+
+rule smoove_paste:
+    input:
+        expand(GENOTYPE_DIR + "{sample}-joint-smoove.genotyped.vcf.gz", sample=samples)
+    output:
+        GENOTYPE_DIR + "results.smoove.square.vcf.gz"
+    params:
+        GENOTYPE_DIR + "*.vcf.gz"
+    threads: 2
+    singularity:
+        "smoove.sif"
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000
+    shell:
+        """
+        smoove paste --name results {params}
+        mv results.smoove.square.vcf.gz {output}
+        """
+
+rule smoove_annotate:
+    input:
+        square = GENOTYPE_DIR + "results.smoove.square.vcf.gz",
+        annot = ANNOTATION_GFF
+    output:
+        GENOTYPE_DIR + "results.smoove.square.anno.vcf"
+    threads: 2
+    resources:
+        cores = 2,
+        runtime = 60,
+        mem_mb = 8000
+    singularity:
+        "smoove.sif"
+    shell:
+        """
+        smoove annotate --gff {input.annot} {input.square} > {output}
+        """
+
+rule smoove_filter:
+    input:
+        GENOTYPE_DIR + "results.smoove.square.anno.e.vcf"
+    output:
+        GENOTYPE_DIR + "results.smoove.square.anno.filter.vcf"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 60,
+        mem_mb = 2000
+    shell:
+        """
+        module load java
+        {java_path} -Xmx2g -jar {SNPSIFT_EX}  filter " ((( MSHQ > 3 ) & (SVTYPE = 'BND')) | (( MSHQ > 3 ) & (SVTYPE = 'INS')) | (( MSHQ > 3 ) & (SVTYPE = 'DEL') & ( GEN[*].DHFFC < 0.7) ) | (( MSHQ > 3 ) & (SVTYPE = 'DUP') & ( GEN[*].DHFFC > 1.25))) " {input} > {output}
+        """
+
+
+#########################################################################################
+# Pindel
+#########################################################################################
+
+rule breakdancer_cfg:
+    input:
+        expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam", sample=samples)
+    params:
+        variants = " ".join(expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam",
+            sample=samples))
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 30,
+        mem_mb = 500
+    output:
+        RESULTS_DIR + "breakdancer_config_for_pindel.txt"
+    shell:
+        """
+        module load nixpkgs/16.09  gcc/7.3.0
+        module load perl samtools breakdancer
+        /home/eherman/soft/breakdancer/perl/bam2cfg.pl \
+        {params.variants} > {output}
+        """
+
+def get_insert_sizes(config, outname):
+    with open(config, 'r') as infile:
+        lines = infile.readlines()
+        #lines = [l for l in (line.strip() for line in infile) if l]
+        out_dict = {}
+        for l in lines:
+            sample_dict = {}
+            entries = l.split("\t")
+            for e in entries:
+                if e != '':
+                    each = e.split(":")
+                    sample_dict.update({each[0]: each[1]})
+            filename = sample_dict['map']
+            insert = str(round(int(float(sample_dict['mean']))))
+            sample = sample_dict['readgroup']
+            sample_split = sample.split(".")
+            label = sample_split[0]
+            if label in out_dict:
+                pass
+            else:
+                out_dict.update({label: [filename, insert]})
+    infile.close()
+    with open(outname, 'w') as outfile:
+        for key in out_dict:
+            outfile.write(out_dict[key][0] + "\t" + out_dict[key][1] + "\t" + key + "\n")
+    outfile.close()
+    return
+
+rule pindel_config:
+    input:
+        bd_config = RESULTS_DIR + "breakdancer_config_for_pindel.txt"
+    output:
+        out = RESULTS_DIR + "pindel_config.txt"
+    run:
+        get_insert_sizes(input.bd_config, output.out)
+
+rule pindel:
+    input:
+        config = RESULTS_DIR + "pindel_config.txt",
+        bam = expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam", sample=samples)
+    output:
+        expand(PINDEL + "pindel_output.{{chr}}_{type}", chr=chr_list, type=pindel_types)
+    params:
+        chrom = lambda wildcards: wildcards.chr,
+        out = lambda wildcards: PINDEL + "pindel_output." + wildcards.chr
+    threads: 16
+    resources:
+        cores = 16,
+            runtime = 1440,
+        mem_mb = 64000
+    shell:
+        """
+        module load StdEnv/2020
+        module load pindel
+        pindel -f {GENOME_FULL} -T {threads} -i {input.config} -c {params.chrom} -o {params.out} -w 2
+        """
+
+def get_coverage(stat_dir, samples):
+    """
+    Retrieves average genome coverage information for pindel maximum supporting reads
+    :param stat_dir: results/stat_and_coverage/ directory path
+    :param samples: list of all sample names
+    :return cov_2x: 2x the average genome coverage
+    :return cov_4x: 4x the average genome coverage
+    """
+    coverage_list = []
+    for sam in samples:
+        sam = os.path.basename(sam)
+        sam = sam.replace(".bam.depth.sample_summary", "")
+        sample_file = sam + ".bam.depth.sample_summary"
+        fpath = os.path.join(stat_dir, sample_file)
+        df = pd.read_csv(fpath, sep='\t', index_col='sample_id')
+        cov = df.loc['Total', 'total']
+        coverage_list.append(cov)
+    avg = sum(coverage_list)/len(coverage_list)
+    cov2 = 2*avg
+    cov4 = 4*avg
+    return cov2, cov4
+
+cov_2x, cov_4x = get_coverage(STATS_DIR, samples)
+
+def get_chrom_end(chromosome):
+    """
+    Returns the length of 50bp from the end of the chromosome of interest
+    :param chromosome: chromosome name
+    :return: max position to look for SVs in pindel (int)
+    """
+    df = pd.read_csv(CHROMSTATS, sep='\t', names=['name', 'start', 'end'], index_col='name')
+    chr_len = df.loc[chromosome, 'end']
+    max = chr_len - 50
+    return max
+
+def get_cov(type):
+    if type == 'TD':
+        return cov_4x
+    else:
+        return cov_2x
+
+rule pindel_filter:
+    input:
+        PINDEL + "pindel_output.{chr}_{type}"
+    output:
+        vcf = PINDEL + "pindel.filtered.{chr}.{type}.vcf",
+        bzip = PINDEL + "pindel.filtered.{chr}.{type}.vcf.gz"
+    params:
+        chr = lambda wildcards: wildcards.chr,
+        length = lambda wildcards: get_chrom_end('{chr}'.format(chr=wildcards.chr)),
+        cov = lambda wildcards: get_cov('{type}'.format(type=wildcards.type))
+    resources:
+        cores = 1,
+        runtime = 260,
+        mem_mb = 4000
+    shell:
+        """
+        module load pindel
+        module load htslib
+        pindel2vcf -p {input} -r {GENOME_FULL} -R {REFERENCE_GENOME} -d 20180508 -v {output.vcf} \
+        -c {params.chr} -mc 1 -is 50 -e 5 -m 2 -f {params.cov} -sr 50 -er {params.length}
+        bgzip -i {output.vcf}
+        bcftools index {output.vcf}
+        """
+
+rule merge_pindel_types:
+    input:
+        expand(PINDEL + "pindel.filtered.{{chr}}.{type}.vcf.gz", type=pindel_types)
+    output:
+        PINDEL + "pindel_output.{chr}.vcf.gz"
+    params:
+        input = " I=".join(expand(PINDEL + "pindel.filtered.{{chr}}.{type}.vcf.gz", type=pindel_types)),
+        dict = GENOME_FULL + ".dict"
+    resources:
+        cores = 1,
+        runtime = 260,
+        mem_mb = 4000
+    shell:
+        """
+        module load java picard
+        java -Xmx4g -jar $EBROOTPICARD/picard.jar MergeVcfs \
+        I={params.input} O={output} \
+        SEQUENCE_DICTIONARY={params.dict}
+        """
+
+rule pindel_merge:
+    input:
+        expand(PINDEL + "pindel_output.{chr}.vcf.gz",chr=chr_list)
+    params:
+        input_line = " ".join(expand(PINDEL + "pindel_output.{chr}.vcf.gz",chr=chr_list))
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 260,
+        mem_mb = 4000
+    output:
+        PINDEL + "pindel_output.all.vcf.gz"
+    shell:
+        """
+        module load bcftools
+        bcftools concat -O z -o {output} {params.input_line}
+        """
+
+#########################################################################################
+# Manta
+#########################################################################################
+
+rule bgzip_chromstats:
+    input:
+        {CHROMSTATS}
+    output:
+        bgzip = CHROMSTATS + ".gz",
+        idx = CHROMSTATS + ".gz.tbi"
+    shell:
+        """
+        module load htslib
+        bgzip -c {input} > {output.bgzip}
+        tabix {output.bgzip}
+        """
+
+rule manta_config:
+    input:
+        samples = expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam", sample=samples),
+        idx = CHROMSTATS + ".gz"
+    params:
+        input_line = " --bam ".join(expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam",
+            sample=samples)),
+        outdir = MANTA_DIR
+    resources:
+        cores = 1,
+        runtime = 30,
+        mem_mb = 2000
+    output:
+        config = MANTA_DIR + "runWorkflow.py",
+    shell:
+        """
+        module load StdEnv/2020 gcc/9.3.0 openmpi/4.0.3
+        module load manta
+        configManta.py --bam {params.input_line} \
+        --referenceFasta {GENOME_FULL} \
+        --callRegions {input.idx} \
+        --runDir {params.outdir} \
+        """
+
+rule manta:
+    input:
+        samples = expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam", sample=samples),
+        config = MANTA_DIR + "runWorkflow.py",
+    params:
+        mem_gb = 64
+    threads: 16
+    resources:
+        cores = 16,
+        runtime = 7200,
+        mem_mb = 64000
+    output:
+        sv = MANTA_DIR + "results/variants/diploidSV.vcf.gz"
+    shell:
+        """
+        module load StdEnv/2020 gcc/9.3.0 openmpi/4.0.3
+        module load manta
+        {input.config} -j {threads} -g {params.mem_gb} 
+        """
+
+#########################################################################################
+# Extract deletions and insertions from Manta and Pindel
+#########################################################################################
+
+rule split_manta:
+    input:
+        MANTA_DIR + "results/variants/diploidSV.vcf.gz"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 30,
+        mem_mb = 2000,
+    output:
+        dels = MANTA_DIR + "manta.DEL.vcf.gz",
+        ins = MANTA_DIR + "manta.INS.vcf.gz"
+    shell:
+        """
+        module load bcftools samtools
+        bcftools view -i 'SVTYPE="DEL"' -O z -o {output.dels} {input}
+        bcftools view -i 'SVTYPE="INS"' -O z -o {output.ins} {input}
+        """
+
+rule msample_split:
+    input:
+        ins = MANTA_DIR + "manta.INS.vcf.gz"
+    output:
+        MANTA_DIR + "{sample}.manta.INS.vcf.gz"
+    params:
+        sam = lambda wildcards: wildcards.sample
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 30,
+        mem_mb = 2000,
+    shell:
+        """
+        module load bcftools samtools
+        bcftools view -O z -s {params.sam} -o {output} {input}
+        """
+
+rule split_pindel:
+    input:
+        PINDEL + "pindel_output.all.vcf.gz"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 30,
+        mem_mb = 2000,
+    output:
+        ins = PINDEL + "pindel.INS.vcf.gz"
+    shell:
+        """
+        module load bcftools samtools
+        bcftools view -i 'SVTYPE="INS"' -O z -o {output.ins} {input}
+        tabix -p vcf {output.ins}
+        """
+
+rule psample_split:
+    input:
+        ins = PINDEL + "pindel.INS.vcf.gz"
+    output:
+        PINDEL + "{sample}.pindel.INS.vcf.gz"
+    params:
+        sam = lambda wildcards: wildcards.sample
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 30,
+        mem_mb = 2000,
+    shell:
+        """
+        module load bcftools samtools
+        bcftools view -O z -s {params.sam} -o {output} {input}
+        """
+
+#########################################################################################
+# combine Pindel and Manta insertions using SURVIVOR
+#########################################################################################
+
+
+rule survivor:
+    input:
+        pindel = PINDEL + "{sample}.pindel.INS.vcf.gz",
+        manta = MANTA_DIR + "{sample}.manta.INS.vcf.gz"
+    params:
+        l = SURVIVOR_DIR + "{sample}.survivor_list.txt",
+        p = PINDEL + "{sample}.pindel.INS.vcf",
+        m = MANTA_DIR + "{sample}.manta.INS.vcf"
+    output:
+        vcf = SURVIVOR_DIR + "{sample}.INS.merged.vcf",
+        zip = SURVIVOR_DIR + "{sample}.INS.merged.vcf.gz",
+    shell:
+        """
+        module load bcftools samtools
+        gunzip -c {input.pindel} > {params.p}
+        gunzip -c {input.manta} > {params.m}
+        ls {params.p} {params.m} > {params.l}
+        /home/eherman/soft/SURVIVOR/Debug/SURVIVOR merge {params.l} 1000 1 1 1 0 30 {output.vcf}
+        bcftools sort -O z -o {output.zip} {output.vcf}
+        tabix -p vcf {output.zip}
+        """
+
+rule sur_merge:
+    input:
+        expand(SURVIVOR_DIR + "{sample}.INS.merged.vcf.gz", sample=samples)
+    output:
+        SURVIVOR_DIR + "INS.merged.vcf.gz"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 30,
+        mem_mb = 2000,
+    shell:
+        """
+        module load bcftools samtools
+        bcftools merge -O z -o {output} {input}
+        """
+
+
+#########################################################################################
+# merge insertions and deletions
+#########################################################################################
+
+rule final_merge:
+    input:
+        ins = SURVIVOR_DIR + "INS.merged.vcf.gz",
+        dels = MANTA_DIR + "manta.DEL.vcf.gz",
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 60,
+        mem_mb = 2000,
+    output:
+        RESULTS_DIR + "SV.vcf.gz"
+    shell:
+        """
+        module load bcftools
+        bcftools concat -a -O z -o {output} {input.ins} {input.dels}
+        """
+
+
+#########################################################################################
+# Auxiliary rules - CNVnator
+#########################################################################################
+
+
+rule cnvnator:
+    input:
+         BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
+    params:
+        genome = "genome",
+        root = lambda wildcards: wildcards.sample
+    resources:
+        cores = 1,
+        runtime = 720,
+        mem_mb = 16000,
+    output:
+        cnv_out = CNV_DIR + "{sample}.cnvnator.txt",
+        cnv_complete = CNV_DIR + "{sample}.complete.txt"
+    singularity:
+        "cnvnator.sif"
+    shell:
+         """
+         rm -f {params.root}.root
+         cnvnator -root {params.root}.root -tree {input}
+         cnvnator -root {params.root}.root -his {PARTITION} -d {params.genome}
+         cnvnator -root {params.root}.root -stat {PARTITION}
+         cnvnator -root {params.root}.root -partition {PARTITION}
+         cnvnator -root {params.root}.root -partition {PARTITION}
+         cnvnator -root {params.root}.root -call {PARTITION} > {output.cnv_out}
+         touch {output.cnv_complete} && rm {params.root}.root
+         """
+
+
+rule cnvnator_to_vcf:
+    input:
+         cnv_in = CNV_DIR + "{sample}.cnvnator.txt",
+         cnv_check = CNV_DIR + "{sample}.complete.txt"
+    params:
+         genome = "genome",
+         prefix = "{sample}",
+         replace_str = CNV_DIR + "{sample}"
+    output:
+         CNV_DIR + "{sample}.cnvnator.vcf"
+    singularity:
+        "cnvnator.sif"
+    shell:
+         """
+         cnvnator2VCF.pl -prefix {params.prefix} -reference {REFERENCE_GENOME} {input.cnv_in} {params.genome} > {output}
+         sed -i 's;{params.replace_str};{params.prefix};g' {output}
+         """
+
+rule cnvnator_filter:
+    input:
+         CNV_DIR + "{sample}.cnvnator.vcf"
+    output:
+         CNV_DIR + "{sample}.cnvnator.filter.vcf"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 60,
+        mem_mb = 2000,
+    shell:
+         """
+         {java_path} -Xmx2g -jar {SNPSIFT_EX}  filter " ((natorP1 < 0.05) & (natorP2 < 0.05) & (natorQ0 < 0.5)) " {input} > {output}
+         """
+
+
+#########################################################################################
+# Auxiliary rules - Breakdancer
+#########################################################################################
+
+rule breakdancer:
+    input:
+        config = RESULTS_DIR + "breakdancer_config.txt"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 720,
+        mem_mb = 20000,
+    params:
+        chrom = lambda wildcards: wildcards.chr
+    output:
+        text = expand(BREAKDANCER_DIR + "breakdancer_output.{{chr}}.txt", chr=chr_list),
+        bed = expand(BREAKDANCER_DIR + "breakdancer_output.{{chr}}.bed", chr=chr_list)
+    shell:
+        """
+        module load nixpkgs/16.09  gcc/7.3.0
+        module load perl samtools breakdancer
+        breakdancer-max -o {params.chrom} -g {output.bed} {input.config} > {output.text}
+        """
+
+rule breakdancer2vcf:
+    input:
+        BREAKDANCER_DIR + "breakdancer_output.{chr}.txt"
+    output:
+        BREAKDANCER_DIR + "breakdancer_output.{chr}.vcf"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 30,
+        mem_mb = 500,
+    shell:
+        """
+        module load java
+        java -Xmx2g -jar {BD2VCF} -o {output} -R {GENOME_FULL} {input}
+        """
+
+#########################################################################################
+# Auxiliary rules: GRIDSS
+#########################################################################################
+rule gridss_reference:
+    input:
+        ref = GENOME_FULL
+    output:
+        GENOME_FULL + ".gridsscache"
+    resources:
+        cores = 1,
+        runtime = 20,
+        mem_mb = 2000,
+    shell:
+        """
+        module load java/13.0.2
+        module load r/4.1.0
+        module load samtools bwa bcftools
+        {GRIDSS_TOOL} -s setupreference \
+        --jar {GRIDSS_JAR} \
+        -r {GENOME_FULL}
+        """
+
+rule gridss_preprocess:
+    input:
+        samples = BASE_QUALITY_RECAL+ "{sample}.m.md.recal.bam"
+    params:
+        sam = lambda wildcards: wildcards.sample
+    threads: 8
+    resources:
+        cores = 8,
+        runtime = 720,
+        mem_mb = 32000,
+    output:
+        GRIDSS_DIR + "{sample}.m.md.recal.bam.gridss.working/{sample}.m.md.recal.bam.sv.bam.bai"
+    shell:
+        """
+        module load java/13.0.2
+        module load r/4.1.0
+        module load samtools bwa bcftools
+        export JAVA_TOOL_OPTIONS="-Xmx32g"
+        {GRIDSS_TOOL} -r {GENOME_FULL} \
+        --jar {GRIDSS_JAR} \
+        -s preprocess \
+        -t {threads} \
+        -w {GRIDSS_DIR} \
+        -b {EXCLUDE} \
+        {input.samples}
+        """
+
+rule gridss_assemble:
+    input:
+        bai = expand(GRIDSS_DIR + "{sample}.m.md.recal.bam.gridss.working/{sample}.m.md.recal.bam.sv.bam.bai", sample=samples)
+    params:
+        input_line = "  ".join(expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam", sample=samples)),
+    threads: 32
+    resources:
+        cores = 32,
+        runtime = 720,
+        mem_mb = 125000,
+    output:
+        GRIDSS_DIR + "assembly.bam.gridss.working/assembly.bam.sv.bam.bai"
+    shell:
+        """
+        module load java/13.0.2
+        module load r/4.1.0
+        module load samtools bwa bcftools
+        export JAVA_TOOL_OPTIONS="-Xmx32g"
+        {GRIDSS_TOOL} -r {GENOME_FULL} \
+        --jar {GRIDSS_JAR} \
+        -s assemble \
+        -a assembly.bam \
+        -t {threads} \
+        -w {GRIDSS_DIR} \
+        -b {EXCLUDE} \
+        {params.input_line}
+        """
+
+rule gridss_call:
+    input:
+        bai = GRIDSS_DIR + "assembly.bam.gridss.working/assembly.bam.sv.bam.bai",
+    params:
+        input_line = "  ".join(expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam",sample=samples)),
+    output:
+        GRIDSS_DIR + "gridss_output.vcf"
+    threads: 32
+    resources:
+        cores = 32,
+        runtime = 1200,
+        mem_mb = 125000,
+    shell:
+        """
+        module load java/13.0.2
+        module load r/4.1.0
+        module load samtools bwa bcftools
+        export JAVA_TOOL_OPTIONS="-Xmx32g"
+        {GRIDSS_TOOL} -r {GENOME_FULL} \
+        --jar {GRIDSS_JAR} \
+        -s call \
+        -a assembly.bam \
+        -t {threads} \
+        -w {GRIDSS_DIR} \
+        -b {EXCLUDE} \
+        --output {output} \
+        {params.input_line}
+        """
+
+#########################################################################################
+# Auxiliary rules - Delly
+#########################################################################################
+rule delly_call_1:
+    input:
+        BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
+    output:
+        DELLY_DIR + "{sample}.delly.bcf"
+    threads: 4
+    resources:
+        cores = 4,
+        runtime = 720,
+        mem_mb = 4000,
+    shell:
+        """
+        module load delly boost bcftools
+        delly call -g {GENOME_FULL} -o {output} -n -x {EXCLUDE} {input}
+        """
+
+rule delly_merge:
+    input:
+        calls = expand(DELLY_DIR + "{sample}.delly.bcf", sample=samples)
+    params:
+        input_line = " ".join(expand(DELLY_DIR + "{sample}.delly.bcf",
+        sample=samples)),
+    threads: 4
+    resources:
+        cores = 4,
+        runtime = 360,
+        mem_mb = 8000,
+    output:
+        DELLY_DIR + "delly_unified.bcf"
+    shell:
+        """
+        module load delly
+        delly merge -o {output} {params.input_line}
+        """
+
+rule delly_call_2:
+    input:
+        merged = DELLY_DIR + "delly_unified.bcf",
+        bam = BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
+    threads: 4
+    resources:
+        cores = 4,
+        runtime = 360,
+        mem_mb = 8000,
+    output:
+        DELLY_DIR + "{sample}.delly.genotyped.bcf"
+    shell:
+        """
+        module load delly
+        delly call -g {GENOME_FULL} -v {input.merged} -x {EXCLUDE} -o {output} {input.bam}
+        """
+rule delly_joint:
+    input:
+        calls = expand(DELLY_DIR + "{sample}.delly.genotyped.bcf" , sample=samples)
+    params:
+        input_line = " ".join(expand(DELLY_DIR + "{sample}.delly.genotyped.bcf",
+            sample=samples)),
+    threads: 4
+    resources:
+        cores = 4,
+        runtime = 360,
+        mem_mb = 8000,
+    output:
+        DELLY_DIR + "delly.genotyped.joint.bcf"
+    shell:
+        """
+        module load bcftools
+        bcftools merge -m id -O b -o {output} {params.input_line}
+        """
+
+rule delly_filter:
+    input:
+        DELLY_DIR + "delly.genotyped.joint.bcf"
+    threads: 4
+    resources:
+        cores = 4,
+        runtime = 360,
+        mem_mb = 8000,
+    output:
+        DELLY_DIR + "delly.genotyped.joint.filt.bcf"
+    shell:
+        """
+        module load delly
+        delly filter -f germline -o {output} {input}       
+        """
+
+rule bcf_to_vcf:
+    input:
+        DELLY_DIR + "delly.genotyped.joint.filt.bcf"
+    output:
+        DELLY_DIR + "delly.genotyped.joint.filt.vcf"
+    shell:
+        """
+        module load bcftools
+        bcftools view {input} > {output}
+        """
+
+#########################################################################################
+# Auxiliary rules - plotting
+#########################################################################################
+
+rule smoove_plot:
+    input:
+        results = GENOTYPE_DIR + "results.smoove.square.anno.filter.vcf",
+        bam = expand(BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam", sample=samples),
+    output:
+        SMOOVE_PLOT_DIR + "index.html"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 360,
+        mem_mb = 8000,
+    params:
+        out = SMOOVE_PLOT_DIR + "samplot_out",
+        command = SMOOVE_PLOT_DIR + "samplot_vcf_cmds.tmp"
+    singularity:
+        "samplot.sif"
+    shell:
+        """
+        samplot vcf --command_file {params.command} --vcf {input.results} -d {params.out} -O png -b {input.bam}
+        """
+
+rule concise_samplot:
+    input:
+        GENOTYPE_DIR + "samplot_vcf_cmds.tmp"
+    params:
+        SMOOVE_PLOT_DIR + "samplot_out"
+    output:
+        GENOTYPE_DIR + "samplot_abridged.sh"
+    shell:
+        """
+        module load python/3.7
+        python {CONCISE} -c {input} -o {params}
+        """
+
+
+rule cnvnator_plot:
+    input:
+        vcf = CNV_DIR + "{sample}.cnvnator.filter.vcf",
+        bam = BASE_QUALITY_RECAL + "{sample}.m.md.recal.bam"
+    output:
+        CNV_PLOT_DIR + "{sample}/index.html"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 360,
+        mem_mb = 8000,
+    params:
+        out = CNV_PLOT_DIR + "{sample}",
+        command = CNV_PLOT_DIR + "{sample}_samplot_commands.txt"
+    singularity:
+        "samplot.sif"
+    shell:
+        """
+        samplot vcf --vcf {input.vcf} -d {params.out} -O png -b {input.bam} --command_file {params.command}
+        """

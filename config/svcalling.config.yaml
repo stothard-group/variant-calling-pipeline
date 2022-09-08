@@ -1,0 +1,36 @@
+## Reference file paths and parameters for SV calling
+
+# Directory containing the reference genome
+reference_dir: "/home/eherman/scratch/Stothard/DAIRY/dairy_variant_pipeline/"
+# Basename of the reference genome file (no .fa extension)
+basename: ARS-UCD1.2_Btau5.0.1Y
+# Path to GFF file containing gene annotations
+annotation_gff: "/home/eherman/scratch/Stothard/DAIRY/dairy_variant_pipeline/resources/reference_files/ARS-UCD1.2_Btau5.0.1Y.gff"
+# Path to bed file containing chromosome information
+chromstats: "/home/eherman/scratch/Stothard/DAIRY/dairy_variant_pipeline/chromosomes.bed"
+# Path to file containing contig names for exclusion by Delly
+exclude: "/home/eherman/scratch/Stothard/DAIRY/dairy_variant_pipeline/ARS-UCD1.2_Btau5.0.1Y.fa.contigsNAMES.txt"
+
+# Path to the SnpSift.jar executable
+snpsift_executable: "/home/eherman/scratch/Stothard/Run9/SnpSift.jar"
+# Path to java (leave as "java" if java is in your path
+java: "java"
+picard: /home/eherman/.local/bin/picard.jar
+# Path to jvarkit breakdancer2vcf jar file
+bd2vcf: /home/eherman/soft/jvarkit/dist/breakdancer2vcf.jar
+# Path to GRIDSS software directory
+gridss_tool: "/home/eherman/soft/GRIDSS/gridss"
+gridss_jar: "/home/eherman/soft/GRIDSS/gridss-2.12.2-gridss-jar-with-dependencies.jar"
+
+# Number of partitions to use for CNVnator
+# Note: if partition size is decreased, the amount of RAM and time
+# for the rule cnvnator must be increased
+partition: 1000
+
+# List of chromosomes for breakdancer
+# Chromosome information
+autosomes_range_first: 1
+autosomes_range_last: 29
+other_chrs: ['X', 'Y', 'MT']
+# Internal value, do not change
+chr_prefix: ''
