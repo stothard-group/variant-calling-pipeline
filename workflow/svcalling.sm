@@ -3,7 +3,8 @@ from os.path import join, exists, basename
 import pandas as pd
 
 configfile: "config/svcalling.config.yaml"
-localrules: cnvnator_to_vcf, make_fai, make_bai, pindel_config, bgzip_chromstats, survivor
+cfgfile = "config/svcalling.config.yaml"
+localrules: cnvnator_to_vcf, make_fai, make_bai, pindel_config, bgzip_chromstats, survivor, pipeline_info, create_md5s
 
 RESULTS_DIR = "20_genomes_results/"
 #RESULTS_DIR = "results/"
@@ -21,6 +22,7 @@ MANTA_DIR = RESULTS_DIR + "manta/"
 GRIDSS_DIR = RESULTS_DIR + "gridss/"
 DELLY_DIR = RESULTS_DIR + "delly/"
 SURVIVOR_DIR = RESULTS_DIR + "survivor/"
+FINAL_DIR = RESULTS_DIR + "final_results/"
 
 CONCISE = GENOTYPE_DIR + "concise_samplot.py"
 SNPSIFT_EX = config["snpsift_executable"]
@@ -36,6 +38,7 @@ EXCLUDE = config["exclude"]
 BD2VCF = config["bd2vcf"]
 GRIDSS_TOOL = config["gridss_tool"]
 GRIDSS_JAR = config["gridss_jar"]
+SURVIVOR = config["survivor"]
 
 java_path = config["java"]
 
@@ -62,7 +65,8 @@ rule final:
 #        CHROMSTATS + ".gz.tbi",
 #        MANTA_DIR + "runWorkflow.py",
         MANTA_DIR + "results/variants/diploidSV.vcf.gz",
-        RESULTS_DIR + "SV.vcf.gz"
+        RESULTS_DIR + "SV.vcf.gz",
+        FINAL_DIR + "sv_md5sum.txt"
 
 #rule auxiliary:
 #    input:
@@ -563,7 +567,7 @@ rule survivor:
         gunzip -c {input.pindel} > {params.p}
         gunzip -c {input.manta} > {params.m}
         ls {params.p} {params.m} > {params.l}
-        /home/eherman/soft/SURVIVOR/Debug/SURVIVOR merge {params.l} 1000 1 1 1 0 30 {output.vcf}
+        {SURVIVOR} merge {params.l} 1000 1 1 1 0 30 {output.vcf}
         bcftools sort -O z -o {output.zip} {output.vcf}
         tabix -p vcf {output.zip}
         """
@@ -605,6 +609,58 @@ rule final_merge:
         module load bcftools
         bcftools concat -a -O z -o {output} {input.ins} {input.dels}
         """
+
+
+#########################################################################################
+# get workflow information, create md5sums
+#########################################################################################
+
+rule cp_idx:
+    input:
+        RESULTS_DIR + "SV.vcf.gz"
+    output:
+        vcf = FINAL_DIR + "SV.vcf.gz",
+        idx = FINAL_DIR + "SV.vcf.gz.tbi"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 360,
+        mem_mb = 4000,
+    shell:
+        """
+        module load htslib
+        cp {input} {output.vcf}
+        tabix -p vcf {output.vcf}
+        """
+
+rule pipeline_info:
+    input:
+        FINAL_DIR + "SV.vcf.gz"
+    output:
+        wf = FINAL_DIR + "SVCalling.sm",
+        vs = FINAL_DIR + "sv_program_versions.txt"
+    shell:
+        """
+        cp workflow/svcalling.sm {output.wf};
+        ./scripts/sv_program_versions.sh {cfgfile} > {output.vs}
+        """
+
+
+rule create_md5s:
+    input:
+        svs = FINAL_DIR + "SV.vcf.gz",
+        sv_idx = FINAL_DIR + "SV.vcf.gz.tbi",
+        wf = FINAL_DIR + "SVCalling.sm",
+        vs = FINAL_DIR + "sv_program_versions.txt"
+    output:
+        FINAL_DIR + "sv_md5sum.txt"
+    shell:
+        """
+        rm -f {output}
+        md5sum {FINAL_DIR}/* > {output}
+        """
+
+
 
 
 #########################################################################################
@@ -728,6 +784,7 @@ rule gridss_reference:
         mem_mb = 2000,
     shell:
         """
+        module load StdEnv/2020
         module load java/13.0.2
         module load r/4.1.0
         module load samtools bwa bcftools

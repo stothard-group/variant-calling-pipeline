@@ -21,6 +21,7 @@ bd2vcf: /home/eherman/soft/jvarkit/dist/breakdancer2vcf.jar
 # Path to GRIDSS software directory
 gridss_tool: "/home/eherman/soft/GRIDSS/gridss"
 gridss_jar: "/home/eherman/soft/GRIDSS/gridss-2.12.2-gridss-jar-with-dependencies.jar"
+survivor: "/home/eherman/soft/SURVIVOR/Debug/SURVIVOR"
 
 # Number of partitions to use for CNVnator
 # Note: if partition size is decreased, the amount of RAM and time

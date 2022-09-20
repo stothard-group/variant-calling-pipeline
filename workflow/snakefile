@@ -3,7 +3,7 @@ import pandas as pd
 
 #Uncomment the following line if working on compute canada
 shell.prefix("module load nixpkgs/16.09; module load gcc/7.3.0; module load python/3.7; module load fastqc; module load bwa;  module load r/3.6.1; module load java/1.8.0_192 ; module load samtools/1.10 ;")
-localrules: split_contigs_list
+localrules: split_contigs_list, parse_multiqc, collect_stats, pipeline_info, create_md5s
 
 # This workflow requires the python module pysam, which can be installed with
 # pip3 install pysam --user
@@ -16,7 +16,7 @@ localrules: split_contigs_list
 # Path to config file
 #########################################################################################
 configfile: 'config/VariantCalling.config.yaml'
-
+cfgfile = 'config/VariantCalling.config.yaml'
 
 #########################################################################################
 # Set local variables
@@ -25,7 +25,7 @@ CONTIGS_REF = config["reference_dir"]
 
 
 RAW_FASTQ_DIR = config["raw_fastq_dir"]
-OUTPUT_DIR = "results/"
+OUTPUT_DIR = "test_results/"
 READ_INDEX = config["read_index"]
 REF_DIR = "resources/reference_files/"
 REFERENCE = REF_DIR + config["basename"]
@@ -36,6 +36,7 @@ THREADS_BIG = config["threads"]["big"]
 DBSNP = config["dbsnp"]
 dbsnp_format = config["dbsnp_format"]
 FASTQC_DIR = OUTPUT_DIR + "fastqc/"
+MULTIQC_DIR = OUTPUT_DIR + "multiqc/"
 ALIGN_DIR = OUTPUT_DIR + "alignment/"
 #RECAL_DIR = OUTPUT_DIR + "base_quality_recal/"
 RECAL_DIR = "/home/eherman/projects/rpp-stothard/eherman/dairy/base_quality_recal/"
@@ -47,7 +48,6 @@ JAVA_MED = config["java_mem"]["med"]
 JAVA_BIGMEM = config["java_mem"]["big"]
 FASTQC = config["fastqc"]
 BWA = config["bwa"]
-trimmomaticPE = config["trimmomatic"]
 GATK = config["gatk"]
 PICARD = config["picard"]
 SAMTOOLS = config["samtools"]
@@ -58,6 +58,7 @@ GVCF_DIR = OUTPUT_DIR + "gvcfs/"
 VCF_DIR = OUTPUT_DIR + "vcfs/"
 SNPINDELS_DIR = OUTPUT_DIR + "snps_indels/"
 LOG_DIR =  OUTPUT_DIR + "logs/"
+FINAL_DIR = OUTPUT_DIR + "final_results/"
 
 READGROUP_FILE = "rg_labels.txt"
 
@@ -124,9 +125,10 @@ chrs_n_conts = chr_list + contigs_part
 #########################################################################################
 rule final:
     input:
-#        expand(FASTQC_DIR + "{sample}_{RR}_fastqc.zip", sample=samples, RR=READ_INDEX),
-#        expand(RAW_FASTQ_DIR + "split/{sample}_R2_part{new}.fastq.gz", sample=samples, new=range(n_of_chunks)),
-#        expand(TRIMMED_DATA + "trimmomatic/{sample}_R1_part{new}.trimP.fastq.gz", sample=samples, new=range(n_of_chunks)),
+        expand(FASTQC_DIR + "{sample}_{RR}_fastqc.zip", sample=samples, RR=READ_INDEX),
+        expand(RAW_FASTQ_DIR + "split/{sample}_R2_part{new}.fastq.gz", sample=samples, new=range(n_of_chunks)),
+        expand(TRIMMED_DATA + "trimmomatic/{sample}_R1_part{new}.trimP.fastq.gz", sample=samples, new=range(n_of_chunks)),
+#        MULTIQC_DIR + "parsed_multiqc.txt",
 #        expand(FASTQC_DIR + "{sample}_R1_part{new}.trimP_fastqc.zip", sample=samples, new=range(n_of_chunks)),
 #        expand(ALIGN_DIR + "{sample}_part{new}.bam", sample=samples, new=range(n_of_chunks)),
 #        expand(ALIGN_DIR + "{sample}.m.bam", sample=samples),
@@ -135,13 +137,18 @@ rule final:
 #        expand(STAT_DIR + "{sample_list_val}.m.md.recal.bam.stats.txt", sample_list_val=list_of_samples),
 #        expand(STAT_DIR + "{sample_list_val}.bam.depth.sample_summary", sample_list_val=list_of_samples),
 #        expand(CONTIGS_DIR + 'contigs_names_{contigs_interval}.geneintervals.interval_list', contigs_interval=contigs_part),
-#        expand(GVCF_DIR + "chrs/validate/{sample}.1.g.vcf.txt", sample=bam_samples),
+#       expand(GVCF_DIR + "chrs/validate/{sample}.1.g.vcf.txt", sample=bam_samples),
 #        expand(VCF_DIR + "chrs/{chrs_interval}.gt.vcf", chrs_interval=chr_list),
 #        expand(GVCF_DIR  + "contigs_merged/{sample}.g.vcf", sample=bam_samples),
-#        expand(RECAL_DIR + "{interbulls}.m.md.recal.rename.bai", interbulls=interbulls)
+      #  expand(RECAL_DIR + "{interbulls}.m.md.recal.rename.bai", interbulls=interbulls),
 #        expand(GVCF_DIR + "{sample}.g.vcf.gz", sample=bam_samples),
-        expand(SNPINDELS_DIR + "SNPs.vcf"),
-        expand(SNPINDELS_DIR + "Indels.vcf"),
+#        SNPINDELS_DIR + "SNPs.vcf",
+#        SNPINDELS_DIR + "Indels.vcf",
+        FINAL_DIR + "SNPs.vcf.gz",
+        FINAL_DIR + "Indels.vcf.gz",
+        FINAL_DIR + "statistics.txt",
+        FINAL_DIR + "vc_md5sum.txt"
+
 
 
 #########################################################################################
@@ -158,7 +165,27 @@ rule fastqc_raw:
         runtime = 480,
         mem_mb = 4000,
     shell:
-        "{FASTQC} -t {threads} --outdir {FASTQC_DIR} {input}"
+        """
+        {FASTQC} -t {threads} --outdir {FASTQC_DIR} {input}
+        """
+
+
+rule multiqc_1:
+    input:
+        expand(FASTQC_DIR + "{sample}_R2_fastqc.zip", sample=samples)
+    output:
+        MULTIQC_DIR + "raw_multiqc_data/multiqc_fastqc.txt"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 30,
+        mem_mb = 200,
+    shell:
+        """
+        module load StdEnv/2020
+        module load python/3.9
+        multiqc -o {MULTIQC_DIR} -n raw_multiqc {FASTQC_DIR}
+        """
 
 
 #########################################################################################
@@ -205,10 +232,13 @@ rule trimmomatic:
     log:
         LOGS + "trimmomatic-{sample}_part{new}.summary"
     shell:
-        "java -Xmx{resources.mem_mb}m -jar {trimmomaticPE} PE -threads {threads} \
+        """
+        module load trimmomatic
+        java -Xmx{resources.mem_mb}m -jar $EBROOTTRIMMOMATIC/trimmomatic-0.39.jar PE -threads {threads} \
                 {input.r1} {input.r2} {output.p1} {output.s1} {output.p2} {output.s2} \
                 ILLUMINACLIP:{ADAPTERS}:2:30:3:1:true LEADING:20 TRAILING:20 SLIDINGWINDOW:3:15 \
-                AVGQUAL:20 MINLEN:35 -phred33 2> {log}"
+                AVGQUAL:20 MINLEN:35 -phred33 2> {log}
+        """
 
 
 #########################################################################################
@@ -228,6 +258,35 @@ rule fastqc_trimmed:
         mem_mb = 8000,
     shell:
         "{FASTQC} -t {threads} --outdir {FASTQC_DIR} {input}"
+
+rule multiqc_2:
+    input:
+        expand(FASTQC_DIR + "{sample}_R2_part{new}.trimP_fastqc.zip", sample=samples, new=range(n_of_chunks))
+    output:
+        MULTIQC_DIR + "trimmed_multiqc_data/multiqc_fastqc.txt"
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 60,
+        mem_mb = 200,
+    shell:
+        """
+        module load StdEnv/2020
+        module load python/3.9
+        multiqc -o {MULTIQC_DIR} -n trimmed_multiqc {FASTQC_DIR}
+        """
+
+rule parse_multiqc:
+    input:
+        multi1 = MULTIQC_DIR + "raw_multiqc_data/multiqc_fastqc.txt",
+        multi2 = MULTIQC_DIR + "trimmed_multiqc_data/multiqc_fastqc.txt"
+    output:
+        MULTIQC_DIR + "parsed_multiqc.txt"
+    shell:
+        """
+        module load python/3.7
+        python scripts/parse_multiqc.py {input.multi1} {input.multi2} {output}
+        """
 
 
 #########################################################################################
@@ -1050,4 +1109,71 @@ rule cat_indels:
             -R {params.reference} \
             -V {params.variants} \
             -out {output} \
+        """
+########################################################################################################################
+# Index and compress final files, create md5sums
+########################################################################################################################
+
+rule compress_snps:
+    input:
+        snps = SNPINDELS_DIR + "SNPs.vcf",
+        indels = SNPINDELS_DIR + "Indels.vcf"
+    output:
+        snps = FINAL_DIR + "SNPs.vcf.gz",
+        indels = FINAL_DIR + "Indels.vcf.gz",
+        snp_idx = FINAL_DIR + "SNPs.vcf.gz.tbi",
+        indel_idx = FINAL_DIR + "Indels.vcf.gz.tbi",
+    threads: 1
+    resources:
+        cores = 1,
+        runtime = 360,
+        mem_mb = 4000,
+    shell:
+        """
+        module load bcftools
+        module load samtools
+        bgzip -c {input.snps} > {output.snps}
+        bgzip -c {input.indels} > {output.indels}
+        tabix -p vcf {output.snps}
+        tabix -p vcf {output.indels}
+        """
+
+rule collect_stats:
+    input:
+        multiqc = MULTIQC_DIR + "parsed_multiqc.txt"
+    output:
+        FINAL_DIR + "statistics.txt"
+    shell:
+        """
+        python collect_stats.py {input.multiqc} {STAT_DIR} {output}
+        """
+
+rule pipeline_info:
+    input:
+        FINAL_DIR + "statistics.txt",
+    output:
+        wf = FINAL_DIR + "VariantCalling.sm",
+        vs = FINAL_DIR + "program_versions.txt"
+    shell:
+        """
+        cp workflow/snakefile {output.wf};
+        ./scripts/program_versions.sh {cfgfile} > {output.vs}
+        """
+
+
+rule create_md5s:
+    input:
+        snps = FINAL_DIR + "SNPs.vcf.gz",
+        indels = FINAL_DIR + "Indels.vcf.gz",
+        snp_idx = FINAL_DIR + "SNPs.vcf.gz.tbi",
+        indel_idx = FINAL_DIR + "Indels.vcf.gz.tbi",
+        stats = FINAL_DIR + "statistics.txt",
+        wf = FINAL_DIR + "VariantCalling.sm",
+        vs = FINAL_DIR + "program_versions.txt"
+    output:
+        FINAL_DIR + "vc_md5sum.txt"
+    shell:
+        """
+        rm -f {output}
+        md5sum {FINAL_DIR}/* > {output}
         """

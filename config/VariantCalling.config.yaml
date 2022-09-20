@@ -22,7 +22,7 @@ r: R
 python: python
 bwa: bwa
 fastqc: fastqc
-trimmomatic: /home/eherman/soft/Trimmomatic-0.36/trimmomatic-0.36.jar
+#trimmomatic: /home/eherman/soft/Trimmomatic-0.36/trimmomatic-0.36.jar
 samtools: samtools
 picard: /home/eherman/.local/bin/picard.jar
 gatk: /home/eherman/scratch/Stothard/FERTILITY/variant_calling/bins/GenomeAnalysisTK.jar
